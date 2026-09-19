@@ -21,40 +21,72 @@ class BaseExporter:
         database_title: str,
         folder_leaf_name: str,
         prop_slugs: Dict[str, str],
+        rel_folder: str = "",
     ) -> None:
-        """Writes an Obsidian Base (.base) file.
+        """Writes an Obsidian Base (.base) file conforming to Obsidian's Bases specification.
 
         Args:
             base_path: Output file path (e.g. `.../Transactions.base`).
             database_title: Name of the database view.
-            folder_leaf_name: Leaf folder name containing entry notes (matches Obsidian file.inFolder semantics).
+            folder_leaf_name: Leaf folder name containing entry notes.
             prop_slugs: Dict of original Notion property name -> safe slug identifier.
+            rel_folder: Folder relative to the export root (e.g. `Transaction Tracker/Transactions`).
         """
         if yaml is None:
             logger.warning("pyyaml not installed — skipping .base file generation for %s", database_title)
             return
 
-        order = ["file.name"] + [f"note.{slug}" for slug in prop_slugs.values()]
+        leaf = Path(folder_leaf_name).name
 
-        properties_section = {
+        # Build candidate folder paths for the filter:
+        # In Obsidian's core Bases implementation:
+        # file.inFolder(arg) checks e.file.path.startsWith(arg + "/")
+        # where e.file.path is the file path relative to the Obsidian vault root.
+        # We supply all valid candidate representations using 'or':
+        # 1. Dynamic context expression: this.file.folder + "/" + leaf
+        # 2. Vault-relative path: e.g. Notion Better Export/Transaction Tracker/Transactions
+        # 3. Export-relative path: e.g. Transaction Tracker/Transactions
+        # 4. Bare leaf folder: e.g. Transactions
+        filter_candidates: List[str] = []
+
+        filter_candidates.append(f'file.inFolder(this.file.folder + "/{leaf}")')
+
+        if self.vault_subpath and rel_folder:
+            full_vault_rel = f"{self.vault_subpath}/{rel_folder}".replace("//", "/")
+            if f'file.inFolder("{full_vault_rel}")' not in filter_candidates:
+                filter_candidates.append(f'file.inFolder("{full_vault_rel}")')
+
+        if rel_folder and f'file.inFolder("{rel_folder}")' not in filter_candidates:
+            filter_candidates.append(f'file.inFolder("{rel_folder}")')
+
+        if f'file.inFolder("{leaf}")' not in filter_candidates:
+            filter_candidates.append(f'file.inFolder("{leaf}")')
+
+        # Property mappings without 'note.' prefix (Obsidian Bases schema)
+        properties_section: Dict[str, Dict[str, str]] = {
             "file.name": {"displayName": "Title"}
         }
         for orig_name, slug in prop_slugs.items():
-            properties_section[f"note.{slug}"] = {"displayName": orig_name}
+            properties_section[slug] = {"displayName": orig_name}
 
-        # Obsidian's file.inFolder() takes the folder name (leaf) and recurses.
-        filter_folder = Path(folder_leaf_name).name
+        order = ["file.name"] + list(prop_slugs.values())
 
         base_doc = {
             "filters": {
-                "and": [f'file.inFolder("{filter_folder}")']
+                "or": filter_candidates
             },
             "properties": properties_section,
             "views": [
                 {
                     "type": "table",
-                    "name": database_title,
+                    "name": "Table",
                     "order": order,
+                    "sort": [
+                        {
+                            "property": "file.name",
+                            "direction": "ASC",
+                        }
+                    ],
                 }
             ],
         }

@@ -48,6 +48,13 @@ class NotionBetterExporter:
         self.write_base = write_base
         self.date_prefix_rows = date_prefix_rows
 
+        if not vault_subpath:
+            parent = self.out_dir.parent
+            if (parent / ".obsidian").exists():
+                vault_subpath = self.out_dir.name
+            elif (self.out_dir / ".obsidian").exists():
+                vault_subpath = ""
+
         self.resolver = HierarchyResolver(self.out_dir)
         self.csv_exporter = CsvExporter(
             self.resolver,
@@ -291,19 +298,24 @@ class NotionBetterExporter:
         logger.info("Database: %s/ (CSV & Base)", rel_folder)
 
         # Get schema properties
-        properties_schema = db_obj.get("properties", {})
-        if not properties_schema and is_ds:
-            try:
-                ds = self.client.retrieve_data_source(db_id)
-                properties_schema = ds.get("properties", {})
-            except Exception:
-                pass
+        properties_schema = db_obj.get("properties") or {}
+        if not properties_schema:
+            # In Notion API 2025-09-03, database properties reside on the data_source object
+            target_ds_ids: List[str] = []
+            if is_ds:
+                target_ds_ids.append(db_id)
+            for ds_ref in data_source_refs:
+                if isinstance(ds_ref, dict) and ds_ref.get("id"):
+                    target_ds_ids.append(ds_ref["id"])
 
-        prop_slugs = {
-            pname: slugify_property_name(pname)
-            for pname, pinfo in properties_schema.items()
-            if isinstance(pinfo, dict) and pinfo.get("type") != "title"
-        }
+            for ds_id in target_ds_ids:
+                try:
+                    ds = self.client.retrieve_data_source(ds_id)
+                    ds_props = ds.get("properties") or {}
+                    if ds_props:
+                        properties_schema.update(ds_props)
+                except Exception as e:
+                    logger.debug("Could not retrieve properties for data source %s: %s", ds_id, e)
 
         # Query all rows
         rows_raw = []
@@ -314,6 +326,20 @@ class NotionBetterExporter:
                 is_data_source=is_ds or bool(data_source_refs),
                 max_rows=self.max_rows_per_db,
             )
+
+        # Fallback: if properties_schema is still empty, derive it from row properties
+        if not properties_schema and rows_raw:
+            for r_dict in rows_raw:
+                r_props = r_dict.get("properties") or {}
+                for pname, pval in r_props.items():
+                    if pname not in properties_schema and isinstance(pval, dict):
+                        properties_schema[pname] = {"type": pval.get("type", "rich_text")}
+
+        prop_slugs = {
+            pname: slugify_property_name(pname)
+            for pname, pinfo in properties_schema.items()
+            if isinstance(pinfo, dict) and pinfo.get("type") != "title"
+        }
 
         db_rows: List[DatabaseRow] = []
         for r_dict in rows_raw:
@@ -378,6 +404,7 @@ class NotionBetterExporter:
                     database_title=title,
                     folder_leaf_name=entries_folder.name,
                     prop_slugs=prop_slugs,
+                    rel_folder=rel_folder,
                 )
 
             # Write Linked CSV file
