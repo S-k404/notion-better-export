@@ -84,6 +84,10 @@ class HierarchyResolver:
         self.used_names: Dict[str, Dict[str, str]] = {}
         # database_id -> canonical NotionObject
         self.canonical_databases: Dict[str, NotionObject] = {}
+        # data_source_id -> canonical NotionObject
+        self.data_source_to_canonical: Dict[str, NotionObject] = {}
+        # title -> canonical NotionObject
+        self.canonical_by_title: Dict[str, NotionObject] = {}
         # Global ID -> Relative Path (without extension)
         self.id_to_relpath: Dict[str, str] = {}
         # Global ID -> Title
@@ -92,12 +96,68 @@ class HierarchyResolver:
     def register_object(self, obj: NotionObject) -> None:
         """Register a Notion object in the global catalog."""
         self.registry[obj.id] = obj
+        clean_id = obj.id.replace("-", "").lower()
+        self.registry[clean_id] = obj
         self.id_to_title[obj.id] = obj.title
+        self.id_to_title[clean_id] = obj.title
         if obj.object_type in ("database", "data_source") and not obj.is_linked_view:
             self.canonical_databases[obj.id] = obj
+            self.canonical_databases[clean_id] = obj
 
-    def get_canonical_database(self, db_id: str) -> Optional[NotionObject]:
-        return self.canonical_databases.get(db_id)
+    def register_canonical_database(
+        self, obj: NotionObject, data_source_ids: Optional[List[str]] = None
+    ) -> None:
+        """Explicitly register a canonical database and all its data source aliases."""
+        self.canonical_databases[obj.id] = obj
+        clean_id = obj.id.replace("-", "").lower()
+        self.canonical_databases[clean_id] = obj
+        if obj.title and obj.title not in ("Untitled", "Untitled Database"):
+            self.canonical_by_title[obj.title] = obj
+
+        # Map its own ID as data source alias if it is a data_source
+        if obj.object_type == "data_source":
+            self.data_source_to_canonical[obj.id] = obj
+            self.data_source_to_canonical[clean_id] = obj
+
+        if data_source_ids:
+            for ds_id in data_source_ids:
+                self.data_source_to_canonical[ds_id] = obj
+                self.data_source_to_canonical[ds_id.replace("-", "").lower()] = obj
+
+    def get_canonical_database(
+        self,
+        db_id: str,
+        data_source_ids: Optional[List[str]] = None,
+        data_source_names: Optional[List[str]] = None,
+        hint_title: Optional[str] = None,
+    ) -> Optional[NotionObject]:
+        clean_id = db_id.replace("-", "").lower()
+        if db_id in self.canonical_databases:
+            return self.canonical_databases[db_id]
+        if clean_id in self.canonical_databases:
+            return self.canonical_databases[clean_id]
+
+        if data_source_ids:
+            for ds_id in data_source_ids:
+                c = self.data_source_to_canonical.get(ds_id) or self.data_source_to_canonical.get(
+                    ds_id.replace("-", "").lower()
+                )
+                if c:
+                    return c
+
+        if data_source_names:
+            for name in data_source_names:
+                if name and name in self.canonical_by_title:
+                    return self.canonical_by_title[name]
+
+        if (
+            hint_title
+            and hint_title not in ("Untitled", "Untitled Database")
+            and hint_title in self.canonical_by_title
+        ):
+            return self.canonical_by_title[hint_title]
+
+        return None
 
     def disambiguate_name(self, folder: Path, base_name: str, object_id: str) -> str:
         """Ensure different Notion objects in the same directory never overwrite each other."""

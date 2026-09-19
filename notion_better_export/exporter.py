@@ -79,14 +79,21 @@ class NotionBetterExporter:
             obj["id"]: obj for obj in all_objects if "id" in obj
         }
 
-        # Step 1.1: Identify canonical databases and register their titles
+        # Step 1.1: Identify canonical databases and register all object titles
+        db_candidates = []
         for obj in all_objects:
+            obj_id = obj.get("id")
+            if not obj_id:
+                continue
             obj_type = obj.get("object")
             if obj_type in ("database", "data_source"):
                 title = extract_database_title(obj)
                 parent_info = obj.get("parent", {})
+                ds_refs = obj.get("data_sources") or []
+                ds_ids = [d["id"] for d in ds_refs if isinstance(d, dict) and "id" in d]
+
                 notion_obj = NotionObject(
-                    id=obj["id"],
+                    id=obj_id,
                     object_type=obj_type,
                     title=title,
                     parent_type=parent_info.get("type", "workspace"),
@@ -96,6 +103,47 @@ class NotionBetterExporter:
                     url=obj.get("url", ""),
                 )
                 self.resolver.register_object(notion_obj)
+                db_candidates.append((notion_obj, ds_ids, ds_refs))
+
+            elif obj_type == "page":
+                title = extract_page_title(obj)
+                self.resolver.id_to_title[obj_id] = title
+                self.resolver.id_to_title[obj_id.replace("-", "").lower()] = title
+
+        # First pass: register databases with real titles as canonical
+        for notion_obj, ds_ids, ds_refs in db_candidates:
+            if notion_obj.title not in ("Untitled", "Untitled Database"):
+                self.resolver.register_canonical_database(notion_obj, ds_ids)
+
+        # Second pass: map untitled databases / linked views to their canonical database
+        for notion_obj, ds_ids, ds_refs in db_candidates:
+            if notion_obj.title in ("Untitled", "Untitled Database"):
+                target = None
+                for ds_id in ds_ids:
+                    target = self.resolver.data_source_to_canonical.get(
+                        ds_id
+                    ) or self.resolver.data_source_to_canonical.get(
+                        ds_id.replace("-", "").lower()
+                    )
+                    if target:
+                        break
+                if not target:
+                    for ds in ds_refs:
+                        name = ds.get("name")
+                        if name and name in self.resolver.canonical_by_title:
+                            target = self.resolver.canonical_by_title[name]
+                            break
+                if target:
+                    notion_obj.is_linked_view = True
+                    self.resolver.canonical_databases[notion_obj.id] = target
+                    self.resolver.canonical_databases[
+                        notion_obj.id.replace("-", "").lower()
+                    ] = target
+                    logger.debug(
+                        "Mapped linked view %s to canonical database %s",
+                        notion_obj.id,
+                        target.title,
+                    )
 
         # -------------------------------------------------------------
         # Step 2: Determine root objects in workspace
@@ -103,11 +151,14 @@ class NotionBetterExporter:
         def is_workspace_root(obj: Dict[str, Any]) -> bool:
             parent = obj.get("parent", {})
             ptype = parent.get("type")
+            # Database rows and data source children are never workspace roots
+            if ptype in ("data_source_id", "database_id"):
+                return False
             if ptype == "workspace":
                 return True
-            parent_id = parent.get("page_id") or parent.get("database_id")
+            parent_id = parent.get("page_id") or parent.get("block_id")
             # If parent object is not shared with integration, treat as root
-            return parent_id not in objects_by_id
+            return bool(parent_id and parent_id not in objects_by_id)
 
         roots = [obj for obj in all_objects if is_workspace_root(obj)]
         logger.info("%d top-level root object(s) found.", len(roots))
@@ -118,9 +169,12 @@ class NotionBetterExporter:
         for obj in roots:
             self._walk_object(obj, self.out_dir, parent_titles=[])
 
-        # Walk any unvisited leftover items (park under _unsorted)
+        # Walk any unvisited standalone leftover pages (park under _unsorted)
         leftovers = [
-            obj for obj in all_objects if obj["id"] not in self.visited_ids
+            obj
+            for obj in all_objects
+            if obj["id"] not in self.visited_ids
+            and obj.get("parent", {}).get("type") not in ("data_source_id", "database_id")
         ]
         if leftovers:
             logger.info("Exporting %d leftover object(s) into _unsorted/...", len(leftovers))
@@ -356,30 +410,63 @@ class NotionBetterExporter:
                     self.errors.append(f"retrieving child_page {bid}: {e}")
 
             elif btype == "child_database":
-                # Embedded database view
+                # Embedded database view or canonical database
                 block_title = block.get("child_database", {}).get("title", "")
-                canonical = self.resolver.get_canonical_database(bid)
 
-                if canonical:
-                    # Already canonical somewhere else - do NOT duplicate export!
-                    logger.debug(
-                        "Skipping duplicate export for linked view of canonical database %s (%s)",
-                        canonical.title,
-                        bid,
-                    )
+                if bid in self.visited_ids:
                     continue
 
-                if bid not in self.visited_ids:
-                    try:
-                        db = self.client.retrieve_database(bid)
-                        self._export_database(
-                            db,
-                            child_folder,
-                            parent_titles,
-                            block_title_hint=block_title,
+                try:
+                    db = self.client.retrieve_database(bid)
+                    db_title = extract_database_title(db, block_title_hint=block_title)
+                    ds_refs = db.get("data_sources") or []
+                    ds_ids = [d["id"] for d in ds_refs if isinstance(d, dict) and "id" in d]
+                    ds_names = [d["name"] for d in ds_refs if isinstance(d, dict) and "name" in d]
+
+                    # If the database has an empty or "Untitled" title, it is a linked database view!
+                    if db_title in ("Untitled", "Untitled Database"):
+                        canonical = self.resolver.get_canonical_database(
+                            bid,
+                            data_source_ids=ds_ids,
+                            data_source_names=ds_names,
+                            hint_title=block_title,
                         )
-                    except Exception as e:
-                        self.errors.append(f"retrieving child_database {bid}: {e}")
+                        target_name = (
+                            canonical.title
+                            if canonical
+                            else (ds_names[0] if ds_names else "Database")
+                        )
+                        if canonical:
+                            self.resolver.canonical_databases[bid] = canonical
+                            self.resolver.canonical_databases[bid.replace("-", "").lower()] = canonical
+                        logger.info(
+                            "Skipping duplicate export for linked view of canonical database '%s' (%s)",
+                            target_name,
+                            bid,
+                        )
+                        continue
+
+                    # This is a canonical database with a real title!
+                    notion_obj = NotionObject(
+                        id=bid,
+                        object_type="database",
+                        title=db_title,
+                        parent_type=db.get("parent", {}).get("type", "workspace"),
+                        parent_id=db.get("parent", {}).get("page_id"),
+                        created_time=db.get("created_time", ""),
+                        last_edited_time=db.get("last_edited_time", ""),
+                        url=db.get("url", ""),
+                    )
+                    self.resolver.register_canonical_database(notion_obj, ds_ids)
+
+                    self._export_database(
+                        db,
+                        child_folder,
+                        parent_titles,
+                        block_title_hint=block_title,
+                    )
+                except Exception as e:
+                    self.errors.append(f"retrieving child_database {bid}: {e}")
 
             elif btype == "link_to_page":
                 # References to other pages or databases are already canonical elsewhere
