@@ -397,6 +397,11 @@ class NotionBetterExporter:
                     parent_titles + [entries_folder.name, row_file.stem],
                 )
 
+            # Fetch view configurations and property ordering from Notion
+            ordered_csv_props, views_config = self._fetch_notion_views(
+                db_id, data_source_refs, prop_slugs, properties_schema
+            )
+
             # Write Base file
             if self.write_base:
                 self.base_exporter.write_base_file(
@@ -405,15 +410,147 @@ class NotionBetterExporter:
                     folder_leaf_name=entries_folder.name,
                     prop_slugs=prop_slugs,
                     rel_folder=rel_folder,
+                    views_config=views_config,
                 )
 
             # Write Linked CSV file
             if self.write_csv:
                 self.csv_exporter.write_database_csv(
                     csv_file,
-                    property_names=list(prop_slugs.keys()),
+                    property_names=ordered_csv_props,
                     rows=db_rows,
                 )
+
+    def _fetch_notion_views(
+        self,
+        db_id: str,
+        data_source_refs: List[Dict[str, Any]],
+        prop_slugs: Dict[str, str],
+        properties_schema: Dict[str, Any],
+    ) -> Tuple[List[str], List[Dict[str, Any]]]:
+        """Fetch views from Notion API and return:
+        (ordered_property_names_for_csv, list_of_obsidian_view_dicts)
+        """
+        slug_to_orig = {slug: orig for orig, slug in prop_slugs.items()}
+
+        id_to_slug: Dict[str, str] = {"title": "file.name"}
+        for pname, pinfo in properties_schema.items():
+            if isinstance(pinfo, dict) and pinfo.get("id"):
+                id_to_slug[pinfo["id"]] = prop_slugs.get(pname, slugify_property_name(pname))
+
+        raw_views: List[Dict[str, Any]] = []
+        if hasattr(self.client.client, "views"):
+            try:
+                v_res = self.client.retry(self.client.client.views.list, database_id=db_id)
+                raw_views = v_res.get("results", [])
+            except Exception:
+                raw_views = []
+
+            if not raw_views and data_source_refs:
+                for ds_ref in data_source_refs:
+                    if isinstance(ds_ref, dict) and ds_ref.get("id"):
+                        try:
+                            v_res = self.client.retry(
+                                self.client.client.views.list,
+                                data_source_id=ds_ref["id"],
+                            )
+                            raw_views = v_res.get("results", [])
+                            if raw_views:
+                                break
+                        except Exception:
+                            continue
+
+        obsidian_views: List[Dict[str, Any]] = []
+        primary_ordered_prop_names: List[str] = []
+
+        for v_stub in raw_views:
+            try:
+                v_detail = self.client.retry(self.client.client.views.retrieve, v_stub["id"])
+                v_name = v_detail.get("name") or "Table"
+                v_config = v_detail.get("configuration", {})
+                v_props = v_config.get("properties", [])
+
+                for p_item in v_props:
+                    pid = p_item.get("property_id")
+                    pname = p_item.get("property_name")
+                    if pid and pname:
+                        id_to_slug[pid] = prop_slugs.get(pname, slugify_property_name(pname))
+
+                visible_slugs: List[str] = []
+                hidden_slugs: List[str] = []
+                for p_item in v_props:
+                    pname = p_item.get("property_name")
+                    if not pname:
+                        continue
+                    slug = prop_slugs.get(pname, slugify_property_name(pname))
+                    if slug == "file.name":
+                        continue
+                    if p_item.get("visible", True):
+                        if slug not in visible_slugs and slug in prop_slugs.values():
+                            visible_slugs.append(slug)
+                    else:
+                        if slug not in hidden_slugs and slug in prop_slugs.values():
+                            hidden_slugs.append(slug)
+
+                remaining_slugs = [
+                    s for s in prop_slugs.values()
+                    if s not in visible_slugs and s not in hidden_slugs
+                ]
+                view_order = ["file.name"] + visible_slugs + hidden_slugs + remaining_slugs
+
+                view_sorts: List[Dict[str, str]] = []
+                for s in (v_detail.get("sorts") or []):
+                    pid = s.get("property")
+                    direction = "DESC" if s.get("direction") == "descending" else "ASC"
+                    slug = id_to_slug.get(pid, pid)
+                    if slug:
+                        view_sorts.append({"property": slug, "direction": direction})
+
+                obsidian_view: Dict[str, Any] = {
+                    "type": "table",
+                    "name": v_name,
+                    "order": view_order,
+                }
+                if view_sorts:
+                    obsidian_view["sort"] = view_sorts
+                obsidian_views.append(obsidian_view)
+
+                if not primary_ordered_prop_names:
+                    for s in view_order:
+                        if s == "file.name":
+                            continue
+                        orig = slug_to_orig.get(s)
+                        if orig and orig not in primary_ordered_prop_names:
+                            primary_ordered_prop_names.append(orig)
+
+            except Exception as e:
+                logger.debug("Failed retrieving view details for %s: %s", v_stub.get("id"), e)
+
+        if not obsidian_views:
+            date_slug = None
+            for pname, pinfo in properties_schema.items():
+                if isinstance(pinfo, dict) and pinfo.get("type") in ("date", "created_time"):
+                    date_slug = prop_slugs.get(pname)
+                    break
+
+            fallback_order = ["file.name"] + list(prop_slugs.values())
+            fallback_view: Dict[str, Any] = {
+                "type": "table",
+                "name": "Table",
+                "order": fallback_order,
+            }
+            if date_slug:
+                fallback_view["sort"] = [{"property": date_slug, "direction": "DESC"}]
+            obsidian_views.append(fallback_view)
+
+        if not primary_ordered_prop_names:
+            primary_ordered_prop_names = list(prop_slugs.keys())
+        else:
+            for p in prop_slugs.keys():
+                if p not in primary_ordered_prop_names:
+                    primary_ordered_prop_names.append(p)
+
+        return primary_ordered_prop_names, obsidian_views
 
     def _walk_children_blocks(
         self, block_id: str, child_folder: Path, parent_titles: List[str]

@@ -64,6 +64,58 @@ class TestBaseExporter(unittest.TestCase):
             self.assertEqual(view["order"], ["file.name", "amount", "category", "date", "payee_source"])
             self.assertEqual(view["sort"][0]["property"], "file.name")
 
+    def test_write_base_file_with_custom_views_and_sorts(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            base_file = tmp_path / "Schedule.base"
+
+            exporter = BaseExporter(vault_subpath="Notion Better Export")
+            prop_slugs = {
+                "When": "when",
+                "Type": "type",
+                "Venue": "venue",
+                "Faculty": "faculty",
+            }
+
+            custom_views = [
+                {
+                    "type": "table",
+                    "name": "📆 This week",
+                    "order": ["file.name", "when", "type", "venue", "faculty"],
+                    "sort": [{"property": "when", "direction": "DESC"}],
+                },
+                {
+                    "type": "table",
+                    "name": "Bridge course",
+                    "order": ["file.name", "when", "venue", "faculty"],
+                    "sort": [{"property": "when", "direction": "ASC"}],
+                }
+            ]
+
+            exporter.write_base_file(
+                base_path=base_file,
+                database_title="Schedule",
+                folder_leaf_name="Schedule",
+                prop_slugs=prop_slugs,
+                rel_folder="ECE University Hub/University — backend/Schedule",
+                views_config=custom_views,
+            )
+
+            self.assertTrue(base_file.exists())
+            content = base_file.read_text(encoding="utf-8")
+            data = yaml.safe_load(content)
+
+            self.assertEqual(len(data["views"]), 2)
+            v1 = data["views"][0]
+            self.assertEqual(v1["name"], "📆 This week")
+            self.assertEqual(v1["order"], ["file.name", "when", "type", "venue", "faculty"])
+            self.assertEqual(v1["sort"], [{"property": "when", "direction": "DESC"}])
+
+            v2 = data["views"][1]
+            self.assertEqual(v2["name"], "Bridge course")
+            self.assertEqual(v2["order"], ["file.name", "when", "venue", "faculty"])
+            self.assertEqual(v2["sort"], [{"property": "when", "direction": "ASC"}])
+
 
 if __name__ == "__main__":
     unittest.main()

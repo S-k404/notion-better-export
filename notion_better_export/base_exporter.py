@@ -22,6 +22,7 @@ class BaseExporter:
         folder_leaf_name: str,
         prop_slugs: Dict[str, str],
         rel_folder: str = "",
+        views_config: Optional[List[Dict[str, Any]]] = None,
     ) -> None:
         """Writes an Obsidian Base (.base) file conforming to Obsidian's Bases specification.
 
@@ -31,6 +32,7 @@ class BaseExporter:
             folder_leaf_name: Leaf folder name containing entry notes.
             prop_slugs: Dict of original Notion property name -> safe slug identifier.
             rel_folder: Folder relative to the export root (e.g. `Transaction Tracker/Transactions`).
+            views_config: Optional list of view configurations derived from Notion views.
         """
         if yaml is None:
             logger.warning("pyyaml not installed — skipping .base file generation for %s", database_title)
@@ -38,17 +40,7 @@ class BaseExporter:
 
         leaf = Path(folder_leaf_name).name
 
-        # Build candidate folder paths for the filter:
-        # In Obsidian's core Bases implementation:
-        # file.inFolder(arg) checks e.file.path.startsWith(arg + "/")
-        # where e.file.path is the file path relative to the Obsidian vault root.
-        # We supply all valid candidate representations using 'or':
-        # 1. Dynamic context expression: this.file.folder + "/" + leaf
-        # 2. Vault-relative path: e.g. Notion Better Export/Transaction Tracker/Transactions
-        # 3. Export-relative path: e.g. Transaction Tracker/Transactions
-        # 4. Bare leaf folder: e.g. Transactions
         filter_candidates: List[str] = []
-
         filter_candidates.append(f'file.inFolder(this.file.folder + "/{leaf}")')
 
         if self.vault_subpath and rel_folder:
@@ -69,14 +61,11 @@ class BaseExporter:
         for orig_name, slug in prop_slugs.items():
             properties_section[slug] = {"displayName": orig_name}
 
-        order = ["file.name"] + list(prop_slugs.values())
-
-        base_doc = {
-            "filters": {
-                "or": filter_candidates
-            },
-            "properties": properties_section,
-            "views": [
+        if views_config and len(views_config) > 0:
+            final_views = views_config
+        else:
+            order = ["file.name"] + list(prop_slugs.values())
+            final_views = [
                 {
                     "type": "table",
                     "name": "Table",
@@ -88,7 +77,14 @@ class BaseExporter:
                         }
                     ],
                 }
-            ],
+            ]
+
+        base_doc = {
+            "filters": {
+                "or": filter_candidates
+            },
+            "properties": properties_section,
+            "views": final_views,
         }
 
         base_path.parent.mkdir(parents=True, exist_ok=True)
