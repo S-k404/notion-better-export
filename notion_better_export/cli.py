@@ -47,7 +47,42 @@ def find_default_token() -> str:
     return ""
 
 
+def resolve_auto_out_dir(custom_out: str = "") -> Path:
+    """Intelligently determine the optimal Obsidian vault export directory."""
+    if custom_out:
+        return Path(custom_out).expanduser().resolve()
+
+    # 1. Check EXPORT_OUT_DIR env var
+    env_out = os.environ.get("EXPORT_OUT_DIR")
+    if env_out and env_out != "./output":
+        return Path(env_out).expanduser().resolve()
+
+    # 2. Check VAULT_PATH env var
+    vault_path = os.environ.get("VAULT_PATH")
+    if vault_path:
+        vp = Path(vault_path).expanduser().resolve()
+        # If pointing to a test folder or general vault, export to "Notion Better Export"
+        if vp.name in ("Noma Test", "Notion Export"):
+            return vp.parent / "Notion Better Export"
+        if "Obsidian Vault" in str(vp):
+            return vp if vp.name == "Notion Better Export" else vp / "Notion Better Export"
+        return vp
+
+    # 3. Standard default for user's obsidian vault
+    candidate = Path("/Users/shamit/Documents/Docker/Obsidian/Obsidian Vault/Notion Better Export")
+    if candidate.parent.exists():
+        return candidate
+
+    return Path("./output").resolve()
+
+
 def main() -> None:
+    known_subcommands = {"auto", "export", "fix"}
+    if len(sys.argv) == 1:
+        sys.argv.append("auto")
+    elif len(sys.argv) > 1 and sys.argv[1] not in known_subcommands and sys.argv[1] not in ("-h", "--help"):
+        sys.argv.insert(1, "auto")
+
     parser = argparse.ArgumentParser(
         prog="notion-better-export",
         description="High-fidelity Notion workspace exporter preserving folder hierarchy & linked CSVs",
@@ -55,6 +90,47 @@ def main() -> None:
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose debug logging")
 
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    # ------------------ Command: auto (smart zero-config) ------------------
+    auto_parser = subparsers.add_parser(
+        "auto",
+        help="Smart zero-config auto mode: automatically detects vault path, token, and applies optimal flags",
+    )
+    auto_parser.add_argument(
+        "--test",
+        "-t",
+        action="store_true",
+        help="Run quick sample test (first 5 rows per database)",
+    )
+    auto_parser.add_argument(
+        "--dry-run",
+        "-d",
+        action="store_true",
+        help="Preview workspace hierarchy without writing files",
+    )
+    auto_parser.add_argument(
+        "--assets",
+        "-a",
+        action="store_true",
+        help="Download image and file attachments locally into _assets",
+    )
+    auto_parser.add_argument(
+        "--out",
+        "-o",
+        default="",
+        help="Override output directory (defaults to Obsidian Vault/Notion Better Export)",
+    )
+    auto_parser.add_argument(
+        "--date-prefix-rows",
+        action="store_true",
+        help="Prefix database row notes with date (YYYY-MM-DD)",
+    )
+    auto_parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Enable verbose debug logging",
+    )
 
     # ------------------ Command: export ------------------
     export_parser = subparsers.add_parser("export", help="Run live export from Notion API")
@@ -151,7 +227,55 @@ def main() -> None:
     args = parser.parse_args()
     setup_logging(args.verbose)
 
-    if args.command == "export":
+    if args.command == "auto":
+        token = find_default_token()
+        if not token:
+            console.print(
+                "[red]Error: No Notion token found in environment or .env.[/red]"
+            )
+            sys.exit(1)
+
+        out_path = resolve_auto_out_dir(args.out)
+        max_rows = 5 if args.test else None
+        mode_desc = (
+            "Dry Run (Preview Only)"
+            if args.dry_run
+            else ("Quick Sample Test (5 rows/db)" if args.test else "Full Live Export")
+        )
+
+        console.rule("[bold cyan]🚀 Notion Better Export — Auto Mode[/bold cyan]")
+        console.print(f"[bold]Vault Destination:[/bold] [green]{out_path}[/green]")
+        console.print(f"[bold]Execution Mode:[/bold]    [yellow]{mode_desc}[/yellow]")
+        console.print("[bold]Pacing Rate:[/bold]       2.8 requests/sec (proactive rate limit)")
+        console.print("[bold]CSV Linking:[/bold]       Obsidian [[wikilinks]] + Note Links")
+        console.print("[bold]Obsidian Bases:[/bold]    Enabled (.base files)")
+        console.print("[bold]Linked Views:[/bold]      Auto-deduplicated to canonical databases")
+        if args.assets:
+            console.print("[bold]Asset Downloads:[/bold]   Enabled (local _assets folders)")
+        console.rule()
+
+        exporter = NotionBetterExporter(
+            token=token,
+            out_dir=out_path,
+            max_rows_per_db=max_rows,
+            download_assets=args.assets,
+            dry_run=args.dry_run,
+            csv_link_format="wikilink",
+            include_csv_note_link=True,
+            write_csv=True,
+            write_base=True,
+            date_prefix_rows=args.date_prefix_rows,
+        )
+        summary = exporter.run()
+        console.print(
+            f"\n[bold green]✓ Done! Processed {summary['exported_objects']} objects with {len(summary['errors'])} errors.[/bold green]"
+        )
+        if not args.dry_run:
+            console.print(
+                f"[cyan]You can now open Obsidian to view your vault at:[/cyan]\n  [bold]{out_path}[/bold]"
+            )
+
+    elif args.command == "export":
         token = args.token or find_default_token()
         if not token:
             console.print(
