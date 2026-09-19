@@ -23,26 +23,35 @@ High-fidelity Notion workspace exporter preserving folder hierarchy, Obsidian Ba
 
 ## Quick Start
 
-### 1. Configure Notion Integration Token
-Copy `.env.sample` to `.env` or set `NOTION_TOKEN`:
+### Zero-Config Auto Mode (Recommended)
+You don't need to specify any paths or flags. Auto Mode automatically reads your Notion token, detects your Obsidian Vault, enables Obsidian wikilinks, includes note links in CSVs, generates Obsidian Bases, prevents rate-limits, and deduplicates linked views:
+
 ```bash
-cp .env.sample .env
-# Edit .env and set your NOTION_TOKEN (or it automatically reads from ../Notoma/.env)
+# 1. Full Live Export (Zero-config into Obsidian Vault)
+./run.sh
+
+# 2. Preview export without writing any files
+./run.sh -d       # or ./run.sh --dry-run
+
+# 3. Quick test export (first 5 rows per database)
+./run.sh -t       # or ./run.sh --test
+
+# 4. Export including local asset/image downloads
+./run.sh -a       # or ./run.sh --assets
 ```
 
-### 2. Run Live Export
+---
+
+### Manual Live Export (Custom Options)
 ```bash
 # Preview export without writing files
 ./run.sh export --out ~/Vault/Notion --dry-run
 
 # Run full export with wikilink relations in CSVs
-./run.sh export --out "/Users/shamit/Documents/Docker/Obsidian/Obsidian Vault/Notion Export"
+./run.sh export --out "/Users/shamit/Documents/Docker/Obsidian/Obsidian Vault/Notion Better Export"
 
 # Export with clean plain titles in CSVs (ideal for Excel / Google Sheets)
 ./run.sh export --out ./output --csv-link-format title
-
-# Download images and file attachments locally
-./run.sh export --out ./output --download-assets
 ```
 
 ### 3. Run Offline Fixer on Existing Exports
