@@ -213,8 +213,11 @@ class HierarchyResolver:
         child_folder = parent_folder / safe_name
         rel_path = "/".join(parent_titles + [safe_name])
 
+        clean_id = page_id.replace("-", "").lower()
         self.id_to_relpath[page_id] = rel_path
+        self.id_to_relpath[clean_id] = rel_path
         self.id_to_title[page_id] = title
+        self.id_to_title[clean_id] = title
 
         return md_file, child_folder, rel_path
 
@@ -276,7 +279,10 @@ class HierarchyResolver:
         md_file = db_folder / f"{safe_name}.md"
         rel_path = "/".join(parent_titles + [db_name, safe_name])
 
+        clean_id = row_id.replace("-", "").lower()
         self.id_to_relpath[row_id] = rel_path
+        self.id_to_relpath[clean_id] = rel_path
         self.id_to_title[row_id] = title
+        self.id_to_title[clean_id] = title
 
         return md_file, rel_path

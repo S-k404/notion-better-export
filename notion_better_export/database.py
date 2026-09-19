@@ -10,9 +10,11 @@ def format_date_value(d: Optional[Dict[str, Any]]) -> str:
     """Formats a Notion date dict {'start': ..., 'end': ...} into a clean string."""
     if not d or not isinstance(d, dict):
         return ""
-    start = d.get("start", "")
-    end = d.get("end")
-    return f"{start} -> {end}" if end else start
+    start = d.get("start") or ""
+    end = d.get("end") or ""
+    if start and end:
+        return f"{start} -> {end}"
+    return start or end
 
 
 def parse_property_value(
@@ -27,6 +29,26 @@ def parse_property_value(
 
     ptype = prop.get("type")
 
+    # In rollups or nested objects, Notion sometimes omits the top-level 'type' key
+    if not ptype:
+        for known_type in (
+            "rich_text",
+            "title",
+            "date",
+            "number",
+            "select",
+            "multi_select",
+            "status",
+            "people",
+            "files",
+            "relation",
+            "formula",
+            "rollup",
+        ):
+            if known_type in prop:
+                ptype = known_type
+                break
+
     if ptype == "title":
         return extract_plain_text(prop.get("title", [])), None
 
@@ -35,7 +57,7 @@ def parse_property_value(
 
     if ptype == "select":
         sel = prop.get("select")
-        return sel.get("name", "") if sel else "", None
+        return sel.get("name", "") if (sel and isinstance(sel, dict)) else "", None
 
     if ptype == "multi_select":
         items = prop.get("multi_select", [])
@@ -43,13 +65,21 @@ def parse_property_value(
 
     if ptype == "status":
         st = prop.get("status")
-        return st.get("name", "") if st else "", None
+        return st.get("name", "") if (st and isinstance(st, dict)) else "", None
 
     if ptype == "date":
         return format_date_value(prop.get("date")), None
 
     if ptype == "checkbox":
         return "true" if prop.get("checkbox") else "false", None
+
+    if ptype == "boolean":
+        b = prop.get("boolean")
+        return "" if b is None else ("true" if b else "false"), None
+
+    if ptype == "string":
+        s = prop.get("string")
+        return "" if s is None else str(s), None
 
     if ptype == "number":
         n = prop.get("number")
@@ -69,15 +99,17 @@ def parse_property_value(
         return str(prop.get("last_edited_time") or ""), None
 
     if ptype == "created_by":
-        u = prop.get("created_by") or {}
-        return u.get("name") or "", None
+        u = prop.get("created_by")
+        return u.get("name", "") if isinstance(u, dict) else "", None
 
     if ptype == "last_edited_by":
-        u = prop.get("last_edited_by") or {}
-        return u.get("name") or "", None
+        u = prop.get("last_edited_by")
+        return u.get("name", "") if isinstance(u, dict) else "", None
 
     if ptype == "unique_id":
-        u = prop.get("unique_id") or {}
+        u = prop.get("unique_id")
+        if not isinstance(u, dict):
+            return "", None
         prefix = u.get("prefix")
         num = u.get("number")
         if num is None:
@@ -91,7 +123,9 @@ def parse_property_value(
         return ", ".join(ids), ids
 
     if ptype == "formula":
-        f = prop.get("formula") or {}
+        f = prop.get("formula")
+        if not isinstance(f, dict):
+            return "", None
         ftype = f.get("type")
         if ftype == "date":
             return format_date_value(f.get("date")), None
@@ -99,13 +133,30 @@ def parse_property_value(
             n = f.get("number")
             return "" if n is None else str(n), None
         if ftype == "boolean":
-            return "true" if f.get("boolean") else "false", None
+            b = f.get("boolean")
+            return "" if b is None else ("true" if b else "false"), None
         if ftype == "string":
-            return str(f.get("string") or ""), None
+            s = f.get("string")
+            return "" if s is None else str(s), None
+        if ftype == "array":
+            parts = []
+            rel_ids: List[str] = []
+            for item in f.get("array", []):
+                if isinstance(item, dict):
+                    v, r = parse_property_value(item)
+                    if v:
+                        parts.append(v)
+                    if r:
+                        rel_ids.extend(r)
+                elif item is not None:
+                    parts.append(str(item))
+            return ", ".join(parts), rel_ids if rel_ids else None
         return "", None
 
     if ptype == "rollup":
-        r = prop.get("rollup") or {}
+        r = prop.get("rollup")
+        if not isinstance(r, dict):
+            return "", None
         rtype = r.get("type")
         if rtype == "number":
             n = r.get("number")
@@ -116,24 +167,38 @@ def parse_property_value(
             parts = []
             rel_ids: List[str] = []
             for item in r.get("array", []):
-                val, ids = parse_property_value(item)
-                if val:
-                    parts.append(val)
-                if ids:
-                    rel_ids.extend(ids)
+                if isinstance(item, dict):
+                    val, ids = parse_property_value(item)
+                    if val:
+                        parts.append(val)
+                    if ids:
+                        rel_ids.extend(ids)
+                elif item is not None:
+                    parts.append(str(item))
             return ", ".join(parts), rel_ids if rel_ids else None
         return "", None
 
     if ptype == "files":
         parts = []
         for item in prop.get("files", []):
+            if not isinstance(item, dict):
+                continue
             name = item.get("name", "")
-            url = (
-                item.get("file", {}).get("url")
-                or item.get("external", {}).get("url", "")
-            )
+            f_obj = item.get("file")
+            ext_obj = item.get("external")
+            url = ""
+            if isinstance(f_obj, dict):
+                url = f_obj.get("url") or ""
+            elif isinstance(ext_obj, dict):
+                url = ext_obj.get("url") or ""
             parts.append(f"[{name}]({url})" if url else name)
         return ", ".join(parts), None
+
+    if ptype == "verification":
+        v = prop.get("verification")
+        if isinstance(v, dict):
+            return v.get("state") or "", None
+        return "", None
 
     return "", None
 

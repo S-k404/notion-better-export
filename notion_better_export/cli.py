@@ -80,6 +80,9 @@ def main() -> None:
     known_subcommands = {"auto", "export", "fix"}
     if len(sys.argv) == 1:
         sys.argv.append("auto")
+    elif len(sys.argv) > 1 and sys.argv[1] == "test":
+        sys.argv[1] = "auto"
+        sys.argv.insert(2, "--test")
     elif len(sys.argv) > 1 and sys.argv[1] not in known_subcommands and sys.argv[1] not in ("-h", "--help"):
         sys.argv.insert(1, "auto")
 
@@ -316,8 +319,9 @@ def main() -> None:
             link_format=args.csv_link_format,
         )
         res = processor.run_all()
+        base_info = f", and {res.get('base_replacements', 0)} Base relations across {res.get('base_files', 0)} Bases" if res.get("base_files", 0) > 0 else ""
         console.print(
-            f"[bold green]✓ Complete! Replaced {res['csv_replacements']} CSV relations across {res['csv_files']} CSVs, and {res['md_replacements']} markdown frontmatter relations across {res['md_files']} notes.[/bold green]"
+            f"[bold green]✓ Complete! Replaced {res['csv_replacements']} CSV relations across {res['csv_files']} CSVs, {res['md_replacements']} markdown frontmatter relations across {res['md_files']} notes{base_info}.[/bold green]"
         )
 
 

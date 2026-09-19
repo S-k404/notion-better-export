@@ -64,17 +64,46 @@ class MarkdownExporter:
             ann = rt.get("annotations", {})
             href = rt.get("href")
 
-            # Check if this is a mention of another page
+            # Check if this is a mention
             mention = rt.get("mention")
-            if mention and mention.get("type") == "page":
-                target_id = mention.get("page", {}).get("id")
-                if target_id:
-                    target_rel = self.resolver.id_to_relpath.get(target_id)
-                    target_title = self.resolver.id_to_title.get(target_id, text)
-                    if target_rel:
-                        out.append(f"[[{target_rel}|{target_title}]]")
+            if mention and isinstance(mention, dict):
+                m_type = mention.get("type")
+                if m_type == "page":
+                    target_id = mention.get("page", {}).get("id")
+                    if target_id:
+                        clean_id = target_id.replace("-", "").lower()
+                        target_rel = self.resolver.id_to_relpath.get(target_id) or self.resolver.id_to_relpath.get(clean_id)
+                        target_title = self.resolver.id_to_title.get(target_id) or self.resolver.id_to_title.get(clean_id, text)
+                        if target_rel:
+                            out.append(f"[[{target_rel}|{target_title}]]")
+                            continue
+                        out.append(f"[[__PENDING__:{target_id}|{target_title}]]")
                         continue
-                    out.append(f"[[__PENDING__:{target_id}|{target_title}]]")
+                elif m_type == "database":
+                    target_id = mention.get("database", {}).get("id")
+                    if target_id:
+                        clean_id = target_id.replace("-", "").lower()
+                        canonical = self.resolver.get_canonical_database(target_id)
+                        target_rel = (canonical.rel_path if canonical else None) or self.resolver.id_to_relpath.get(target_id) or self.resolver.id_to_relpath.get(clean_id)
+                        target_title = (canonical.title if (canonical and canonical.title not in ("Untitled", "Untitled Database")) else None) or self.resolver.id_to_title.get(target_id) or self.resolver.id_to_title.get(clean_id, text)
+                        if target_rel:
+                            out.append(f"[[{target_rel}|{target_title}]]")
+                            continue
+                        out.append(f"[[__PENDING__:{target_id}|{target_title}]]")
+                        continue
+                elif m_type == "date":
+                    d = mention.get("date")
+                    if d:
+                        start = d.get("start") or ""
+                        end = d.get("end") or ""
+                        date_str = f"{start} -> {end}" if (start and end) else (start or end)
+                        if date_str:
+                            out.append(f"@{date_str}")
+                            continue
+                elif m_type == "user":
+                    u = mention.get("user", {})
+                    user_name = u.get("name") or text
+                    out.append(f"@{user_name}")
                     continue
 
             # Format styles
@@ -188,7 +217,11 @@ class MarkdownExporter:
                 lines.append(f"{pad}- [{box}] {text}")
             elif btype == "toggle":
                 text = self.rich_text_to_markdown(data.get("rich_text", []))
-                lines.append(f"{pad}<details><summary>{text}</summary>")
+                has_kids = bool(block.get("has_children") and fetch_children_fn)
+                if has_kids:
+                    lines.append(f"{pad}<details><summary>{text}</summary>")
+                else:
+                    lines.append(f"{pad}<details><summary>{text}</summary></details>")
             elif btype == "quote":
                 text = self.rich_text_to_markdown(data.get("rich_text", []))
                 lines.append(f"{pad}> {text}")
@@ -227,10 +260,13 @@ class MarkdownExporter:
             elif btype == "table":
                 # Render Notion table
                 if fetch_children_fn:
-                    rows = fetch_children_fn(block["id"])
-                    md_table = self.table_rows_to_markdown(rows)
-                    if md_table:
-                        lines.append(md_table)
+                    try:
+                        rows = fetch_children_fn(block["id"])
+                        md_table = self.table_rows_to_markdown(rows)
+                        if md_table:
+                            lines.append(md_table)
+                    except Exception as e:
+                        logger.debug("Failed fetching table rows for %s: %s", block.get("id"), e)
             elif btype in ("column_list", "column", "synced_block"):
                 pass  # Flatten container blocks, recurse into children below
 
@@ -238,7 +274,11 @@ class MarkdownExporter:
             if block.get("has_children") and fetch_children_fn and btype not in (
                 "child_page", "child_database", "table"
             ):
-                child_blocks = fetch_children_fn(block["id"])
+                try:
+                    child_blocks = fetch_children_fn(block["id"])
+                except Exception as e:
+                    logger.debug("Failed fetching children for block %s: %s", block.get("id"), e)
+                    child_blocks = []
                 nested_indent = indent if btype in ("column_list", "column", "synced_block") else indent + 1
                 child_md = self.blocks_to_markdown(
                     child_blocks, target_dir, nested_indent, fetch_children_fn
@@ -301,8 +341,9 @@ class MarkdownExporter:
                 # Format relations as a list of wikilinks
                 resolved_links = []
                 for rid in rel_ids:
-                    title = self.resolver.id_to_title.get(rid)
-                    rel_path = self.resolver.id_to_relpath.get(rid)
+                    clean_rid = rid.replace("-", "").lower()
+                    title = self.resolver.id_to_title.get(rid) or self.resolver.id_to_title.get(clean_rid)
+                    rel_path = self.resolver.id_to_relpath.get(rid) or self.resolver.id_to_relpath.get(clean_rid)
                     if title and rel_path:
                         resolved_links.append(f"[[{rel_path}|{title}]]")
                     elif title:
@@ -331,9 +372,10 @@ class MarkdownExporter:
 
             def embed_replacer(m):
                 target_id = m.group(1)
+                clean_target_id = target_id.replace("-", "").lower()
                 label = m.group(2)
                 base_rel = self.resolver.id_to_base_path.get(target_id) or self.resolver.id_to_base_path.get(
-                    target_id.replace("-", "").lower()
+                    clean_target_id
                 )
                 canonical = self.resolver.get_canonical_database(target_id)
 
@@ -342,27 +384,36 @@ class MarkdownExporter:
                 elif label and label not in ("Untitled", "Database"):
                     display_title = label
                 else:
-                    display_title = self.resolver.id_to_title.get(target_id, "Database")
+                    display_title = self.resolver.id_to_title.get(target_id) or self.resolver.id_to_title.get(
+                        clean_target_id, "Database"
+                    )
 
-                target_rel = base_rel or (canonical.rel_path if canonical else self.resolver.id_to_relpath.get(target_id))
+                target_rel = base_rel or (canonical.rel_path if canonical else (
+                    self.resolver.id_to_relpath.get(target_id) or self.resolver.id_to_relpath.get(clean_target_id)
+                ))
                 if target_rel:
                     return f"[↗ {display_title}]([[{target_rel}.base]])\n\n![[{target_rel}.base]]"
                 return f"[↗ {display_title}]"
 
             def pending_replacer(m):
                 target_id = m.group(1)
+                clean_target_id = target_id.replace("-", "").lower()
                 label = m.group(2)
                 canonical = self.resolver.get_canonical_database(target_id)
                 if canonical and canonical.rel_path:
                     title = canonical.title if canonical.title not in ("Untitled", "Untitled Database") else label
                     return f"[[{canonical.rel_path}|{title}]]"
 
-                rel = self.resolver.id_to_relpath.get(target_id)
+                rel = self.resolver.id_to_relpath.get(target_id) or self.resolver.id_to_relpath.get(clean_target_id)
                 if rel:
-                    clean_label = label if label not in ("Untitled", "") else self.resolver.id_to_title.get(target_id, "Note")
+                    clean_label = label if label not in ("Untitled", "") else (
+                        self.resolver.id_to_title.get(target_id) or self.resolver.id_to_title.get(clean_target_id, "Note")
+                    )
                     return f"[[{rel}|{clean_label}]]"
 
-                clean_label = label if label not in ("Untitled", "") else self.resolver.id_to_title.get(target_id, "Note")
+                clean_label = label if label not in ("Untitled", "") else (
+                    self.resolver.id_to_title.get(target_id) or self.resolver.id_to_title.get(clean_target_id, "Note")
+                )
                 return f"[[{clean_label}]]"
 
             new_text = pattern_embed.sub(embed_replacer, text)

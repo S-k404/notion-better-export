@@ -31,8 +31,9 @@ class CsvExporter:
         self, target_id: str, base_csv_dir: Optional[Path] = None
     ) -> str:
         """Format a single Notion target ID into a resolved link."""
-        title = self.resolver.id_to_title.get(target_id)
-        rel_path = self.resolver.id_to_relpath.get(target_id)
+        clean_id = target_id.replace("-", "").lower()
+        title = self.resolver.id_to_title.get(target_id) or self.resolver.id_to_title.get(clean_id)
+        rel_path = self.resolver.id_to_relpath.get(target_id) or self.resolver.id_to_relpath.get(clean_id)
 
         if not title:
             # Not in registry (e.g. not shared or external)

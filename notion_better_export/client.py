@@ -159,13 +159,34 @@ class NotionApiClient:
         return self.retry(self.client.pages.retrieve, page_id=page_id)
 
     def retrieve_database(self, database_id: str) -> Dict[str, Any]:
-        return self.retry(self.client.databases.retrieve, database_id=database_id)
+        try:
+            return self.retry(self.client.databases.retrieve, database_id=database_id)
+        except APIResponseError as err:
+            if err.status == 404 or "object_not_found" in str(err).lower():
+                if hasattr(self.client, "data_sources"):
+                    try:
+                        return self.retry(
+                            self.client.data_sources.retrieve, data_source_id=database_id
+                        )
+                    except Exception:
+                        pass
+            raise
 
     def retrieve_data_source(self, data_source_id: str) -> Dict[str, Any]:
         if hasattr(self.client, "data_sources"):
-            return self.retry(
-                self.client.data_sources.retrieve, data_source_id=data_source_id
-            )
+            try:
+                return self.retry(
+                    self.client.data_sources.retrieve, data_source_id=data_source_id
+                )
+            except APIResponseError as err:
+                if err.status == 404 or "object_not_found" in str(err).lower():
+                    try:
+                        return self.retry(
+                            self.client.databases.retrieve, database_id=data_source_id
+                        )
+                    except Exception:
+                        pass
+                raise
         return self.retrieve_database(data_source_id)
 
     def retrieve_block(self, block_id: str) -> Dict[str, Any]:

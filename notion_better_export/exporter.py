@@ -43,17 +43,16 @@ class NotionBetterExporter:
         self.max_rows_per_db = max_rows_per_db
         self.download_assets = download_assets
         self.dry_run = dry_run
-        self.vault_subpath = vault_subpath
         self.write_csv = write_csv
         self.write_base = write_base
         self.date_prefix_rows = date_prefix_rows
-
         if not vault_subpath:
             parent = self.out_dir.parent
             if (parent / ".obsidian").exists():
                 vault_subpath = self.out_dir.name
             elif (self.out_dir / ".obsidian").exists():
                 vault_subpath = ""
+        self.vault_subpath = vault_subpath
 
         self.resolver = HierarchyResolver(self.out_dir)
         self.csv_exporter = CsvExporter(

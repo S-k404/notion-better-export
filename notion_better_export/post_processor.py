@@ -39,13 +39,18 @@ class ExportPostProcessor:
         if self.manifest_path.exists():
             try:
                 data = json.loads(self.manifest_path.read_text(encoding="utf-8"))
-                self.id_to_path = data
                 for nid, relpath in data.items():
-                    # Extract title from the leaf of the relpath
+                    clean = nid.replace("-", "").lower()
                     title = relpath.split("/")[-1]
-                    # Strip date prefix if present for clean title
+                    self.id_to_path[nid] = relpath
+                    self.id_to_path[clean] = relpath
                     self.id_to_title[nid] = title
-                logger.info("Loaded %d mappings from manifest %s", len(self.id_to_path), self.manifest_path)
+                    self.id_to_title[clean] = title
+                    if len(clean) == 32:
+                        hyphenated = f"{clean[:8]}-{clean[8:12]}-{clean[12:16]}-{clean[16:20]}-{clean[20:]}"
+                        self.id_to_path[hyphenated] = relpath
+                        self.id_to_title[hyphenated] = title
+                logger.info("Loaded %d mappings from manifest %s", len(data), self.manifest_path)
                 return self.id_to_path
             except Exception as e:
                 logger.warning("Could not parse manifest %s: %s", self.manifest_path, e)
@@ -67,12 +72,19 @@ class ExportPostProcessor:
                 continue
 
             notion_id = id_match.group(1).strip()
+            clean_id = notion_id.replace("-", "").lower()
             title_match = title_pattern.search(content[:1000])
             title = title_match.group(1).strip() if title_match else md_file.stem
 
             rel_path = str(md_file.relative_to(self.export_dir).with_suffix(""))
             self.id_to_path[notion_id] = rel_path
+            self.id_to_path[clean_id] = rel_path
             self.id_to_title[notion_id] = title
+            self.id_to_title[clean_id] = title
+            if len(clean_id) == 32:
+                hyphenated = f"{clean_id[:8]}-{clean_id[8:12]}-{clean_id[12:16]}-{clean_id[16:20]}-{clean_id[20:]}"
+                self.id_to_path[hyphenated] = rel_path
+                self.id_to_title[hyphenated] = title
             count += 1
 
         logger.info("Built registry with %d notes from markdown scan.", count)
@@ -80,8 +92,9 @@ class ExportPostProcessor:
 
     def format_link(self, notion_id: str) -> str:
         """Format a Notion ID as a human title or link."""
-        title = self.id_to_title.get(notion_id)
-        rel_path = self.id_to_path.get(notion_id)
+        clean_id = notion_id.replace("-", "").lower()
+        title = self.id_to_title.get(notion_id) or self.id_to_title.get(clean_id)
+        rel_path = self.id_to_path.get(notion_id) or self.id_to_path.get(clean_id)
 
         if not title:
             return notion_id
@@ -208,15 +221,41 @@ class ExportPostProcessor:
 
         return count
 
+    def process_base_file(self, base_file: Path) -> int:
+        """Inspects an Obsidian Base (.base) file, resolving any raw UUIDs in filters or views."""
+        try:
+            text = base_file.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            return 0
+
+        uuids = UUID_REGEX.findall(text)
+        if not uuids:
+            return 0
+
+        new_text = text
+        count = 0
+        for uid in set(uuids):
+            title = self.id_to_title.get(uid) or self.id_to_title.get(uid.replace("-", "").lower())
+            if title and title != uid:
+                new_text = new_text.replace(uid, title)
+                count += 1
+
+        if count > 0:
+            base_file.write_text(new_text, encoding="utf-8")
+
+        return count
+
     def run_all(self) -> Dict[str, int]:
-        """Runs the offline post-processor across all CSV and Markdown files."""
+        """Runs the offline post-processor across all CSV, Markdown, and Base files."""
         self.load_or_build_manifest()
 
         csv_files = list(self.export_dir.rglob("*.csv"))
         md_files = list(self.export_dir.rglob("*.md"))
+        base_files = list(self.export_dir.rglob("*.base"))
 
         total_csv_replacements = 0
         total_md_replacements = 0
+        total_base_replacements = 0
 
         for csv_file in csv_files:
             replaces = self.process_csv_file(csv_file)
@@ -226,17 +265,25 @@ class ExportPostProcessor:
             replaces = self.process_markdown_frontmatter(md_file)
             total_md_replacements += replaces
 
+        for base_file in base_files:
+            replaces = self.process_base_file(base_file)
+            total_base_replacements += replaces
+
         logger.info(
-            "Finished post-processing: %d CSV replacements, %d MD frontmatter replacements across %d CSVs and %d MD files.",
+            "Finished post-processing: %d CSV replacements, %d MD replacements, %d Base replacements across %d CSVs, %d MDs, and %d Bases.",
             total_csv_replacements,
             total_md_replacements,
+            total_base_replacements,
             len(csv_files),
             len(md_files),
+            len(base_files),
         )
 
         return {
             "csv_files": len(csv_files),
             "md_files": len(md_files),
+            "base_files": len(base_files),
             "csv_replacements": total_csv_replacements,
             "md_replacements": total_md_replacements,
+            "base_replacements": total_base_replacements,
         }
