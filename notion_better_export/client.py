@@ -5,27 +5,48 @@ from notion_client import Client
 from notion_client.errors import APIResponseError
 
 logger = logging.getLogger("notion_better_export")
+# Suppress notion_client's internal noisy WARNING logs since we handle retries and pacing cleanly
+logging.getLogger("notion_client").setLevel(logging.ERROR)
+
+
+class NotionRateLimiter:
+    """Enforces Notion's average rate limit (3 requests per second) proactively
+    to prevent HTTP 429 errors and API throttling delays.
+    """
+
+    def __init__(self, requests_per_second: float = 2.8):
+        self.interval = 1.0 / requests_per_second
+        self.last_request_time = 0.0
+
+    def wait(self) -> None:
+        now = time.time()
+        elapsed = now - self.last_request_time
+        if elapsed < self.interval:
+            time.sleep(self.interval - elapsed)
+        self.last_request_time = time.time()
 
 
 class NotionApiClient:
-    """Robust Notion API Client with rate limiting and exponential backoff."""
+    """Robust Notion API Client with proactive rate limiting and exponential backoff."""
 
     def __init__(self, token: str, max_retries: int = 5, base_delay: float = 1.0):
         self.client = Client(auth=token)
         self.max_retries = max_retries
         self.base_delay = base_delay
+        self.rate_limiter = NotionRateLimiter(requests_per_second=2.8)
 
     def retry(self, func: Callable, *args, **kwargs) -> Any:
-        """Executes API function with exponential backoff on 429 and network errors."""
+        """Executes API function with proactive pacing and exponential backoff on 429."""
         delay = self.base_delay
         for attempt in range(self.max_retries):
             try:
+                self.rate_limiter.wait()
                 return func(*args, **kwargs)
             except APIResponseError as err:
                 if err.status == 429 or "rate_limited" in str(err).lower():
                     # Check for Retry-After header or fallback
                     retry_after = getattr(err, "headers", {}).get("retry-after")
-                    wait_sec = float(retry_after) if retry_after else delay
+                    wait_sec = float(retry_after) if retry_after else max(delay, 2.0)
                     logger.warning(
                         "Rate limited by Notion API (attempt %d/%d). Sleeping %.2fs...",
                         attempt + 1,
