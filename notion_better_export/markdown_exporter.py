@@ -153,6 +153,21 @@ class MarkdownExporter:
                     lines.append(f"{pad}- 📊 [[__PENDING__:{block['id']}|{display_title}]]")
                 continue
 
+            if btype == "link_to_page":
+                # Linked page or database reference
+                target_type = data.get("type", "")
+                target_id = data.get(target_type, "")
+                if target_id:
+                    canonical = self.resolver.get_canonical_database(target_id)
+                    rel = canonical.rel_path if canonical else self.resolver.id_to_relpath.get(target_id)
+                    title = canonical.title if canonical else self.resolver.id_to_title.get(target_id, "Linked Item")
+                    icon = "📊" if target_type == "database_id" else "📄"
+                    if rel:
+                        lines.append(f"{pad}- {icon} [[{rel}|{title}]]")
+                    else:
+                        lines.append(f"{pad}- {icon} [[__PENDING__:{target_id}|{title}]]")
+                continue
+
             if btype == "paragraph":
                 text = self.rich_text_to_markdown(data.get("rich_text", []))
                 lines.append(f"{pad}{text}" if text else "")

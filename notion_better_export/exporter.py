@@ -35,6 +35,7 @@ class NotionBetterExporter:
         include_csv_note_link: bool = True,
         write_csv: bool = True,
         write_base: bool = True,
+        date_prefix_rows: bool = False,
     ):
         self.client = NotionApiClient(token)
         self.out_dir = Path(out_dir).resolve()
@@ -45,6 +46,7 @@ class NotionBetterExporter:
         self.vault_subpath = vault_subpath
         self.write_csv = write_csv
         self.write_base = write_base
+        self.date_prefix_rows = date_prefix_rows
 
         self.resolver = HierarchyResolver(self.out_dir)
         self.csv_exporter = CsvExporter(
@@ -262,10 +264,15 @@ class NotionBetterExporter:
         db_rows: List[DatabaseRow] = []
         for r_dict in rows_raw:
             row_obj = build_database_row(r_dict, db_id)
+            prefix = (
+                row_obj.date_prefix
+                if (self.date_prefix_rows or row_obj.title == "Untitled")
+                else ""
+            )
             row_file, row_rel = self.resolver.compute_row_paths(
                 row_obj.id,
                 row_obj.title,
-                row_obj.date_prefix,
+                prefix,
                 entries_folder,
                 parent_titles,
                 entries_folder.name,
@@ -373,6 +380,10 @@ class NotionBetterExporter:
                         )
                     except Exception as e:
                         self.errors.append(f"retrieving child_database {bid}: {e}")
+
+            elif btype == "link_to_page":
+                # References to other pages or databases are already canonical elsewhere
+                continue
 
             elif block.get("has_children"):
                 # Descend into toggles, columns, callouts to find any nested subpages

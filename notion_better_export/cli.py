@@ -114,6 +114,11 @@ def main() -> None:
         help="Relative path from Obsidian vault root to --out (for .base filters)",
     )
     export_parser.add_argument(
+        "--date-prefix-rows",
+        action="store_true",
+        help="Prefix database row markdown filenames with their date or creation date (e.g. YYYY-MM-DD Note.md)",
+    )
+    export_parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Walk and preview the export without writing files",
@@ -169,6 +174,7 @@ def main() -> None:
             include_csv_note_link=not args.no_note_link,
             write_csv=not args.no_csv,
             write_base=not args.no_base,
+            date_prefix_rows=args.date_prefix_rows,
         )
         summary = exporter.run()
         console.print(
