@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "notion-better-export"
+version = "0.1.0"
+description = "High-fidelity Notion workspace exporter preserving folder hierarchy, Obsidian Bases, and linked CSV databases"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "notion-client>=2.2.0",
+    "pyyaml>=6.0",
+    "rich>=13.0.0",
+]
+
+[project.scripts]
+notion-better-export = "notion_better_export.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["notion_better_export"]

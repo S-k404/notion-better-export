@@ -1,0 +1,10 @@
+services:
+  notion-export:
+    build: .
+    container_name: notion-better-export
+    environment:
+      - NOTION_TOKEN=${NOTION_TOKEN}
+    volumes:
+      - ./output:/output
+      - ../Obsidian/Obsidian Vault:/vault
+    command: ["export", "--out", "/vault/Notion Better Export"]
