@@ -1,11 +1,38 @@
+# Python bytecode and build artifacts
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
 *.egg-info/
 dist/
 build/
+*.egg
+
+# Virtual environments
 .venv/
+venv/
+ENV/
+env/
+
+# Environment variables & secrets
 .env
+.env.local
+
+# Output and local scratch files
 output/
 scratch/
 notion_export_legacy.py
+
+# Testing and coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Operating system and editor artifacts
 .DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*~

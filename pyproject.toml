@@ -8,14 +8,46 @@ version = "0.1.0"
 description = "High-fidelity Notion workspace exporter preserving folder hierarchy, Obsidian Bases, and linked CSV databases"
 readme = "README.md"
 requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+    { name = "Shamit", email = "shamitkumar4@gmail.com" },
+]
+keywords = ["notion", "obsidian", "bases", "export", "markdown", "csv", "pkm"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Utilities",
+    "Topic :: Text Processing :: Markup :: Markdown",
+]
 dependencies = [
     "notion-client>=2.2.0",
     "pyyaml>=6.0",
     "rich>=13.0.0",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "ruff>=0.1.0",
+]
+
 [project.scripts]
 notion-better-export = "notion_better_export.cli:main"
+nbe = "notion_better_export.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/shamitkumar4/notion-better-export"
+Repository = "https://github.com/shamitkumar4/notion-better-export"
+Issues = "https://github.com/shamitkumar4/notion-better-export/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["notion_better_export"]
