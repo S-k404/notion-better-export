@@ -49,8 +49,9 @@ class TestMarkdownExporter(unittest.TestCase):
             }
         ]
         md = self.md_exporter.blocks_to_markdown(blocks, target_dir=self.out_root)
-        # Must resolve to canonical database link, NEVER "[[Untitled]]"
-        self.assertIn("[[University Backend/📅 Schedule|Mark Attendance]]", md)
+        # Must resolve to canonical database base embed, NEVER "[[Untitled]]"
+        self.assertIn("![[University Backend/📅 Schedule.base]]", md)
+        self.assertIn("[↗ Mark Attendance]([[University Backend/📅 Schedule.base]])", md)
         self.assertNotIn("Untitled", md)
 
     def test_row_frontmatter_relations(self):
@@ -83,6 +84,22 @@ class TestMarkdownExporter(unittest.TestCase):
 
         updated_text = md_file.read_text(encoding="utf-8")
         self.assertEqual(updated_text, "Here is a link: [[Budget/September 2026|September 2026]]")
+
+    def test_rewrite_embed_base_links(self):
+        test_dir = self.out_root / "embed_base_test"
+        test_dir.mkdir(parents=True, exist_ok=True)
+        md_file = test_dir / "dashboard.md"
+        md_file.write_text("Section\n[[__EMBED_BASE__:view-schedule-123|Untitled]]", encoding="utf-8")
+
+        self.resolver.id_to_base_path["view-schedule-123"] = "Hub/View of 📅 Schedule"
+        self.resolver.id_to_title["view-schedule-123"] = "View of 📅 Schedule"
+        self.md_exporter.rewrite_forward_links(test_dir)
+
+        updated_text = md_file.read_text(encoding="utf-8")
+        self.assertIn("[↗ View of 📅 Schedule]([[Hub/View of 📅 Schedule.base]])", updated_text)
+        self.assertIn("![[Hub/View of 📅 Schedule.base]]", updated_text)
+        self.assertNotIn("Untitled", updated_text)
+        self.assertNotIn("__EMBED_BASE__", updated_text)
 
 
 if __name__ == "__main__":

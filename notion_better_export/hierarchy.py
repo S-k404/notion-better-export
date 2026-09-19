@@ -90,8 +90,24 @@ class HierarchyResolver:
         self.canonical_by_title: Dict[str, NotionObject] = {}
         # Global ID -> Relative Path (without extension)
         self.id_to_relpath: Dict[str, str] = {}
+        # Global ID -> Relative Base Path (without extension)
+        self.id_to_base_path: Dict[str, str] = {}
         # Global ID -> Title
         self.id_to_title: Dict[str, str] = {}
+
+    def register_linked_view_base(
+        self, view_id: str, base_rel_path: str, title: str, canonical: NotionObject
+    ) -> None:
+        """Register a dedicated .base file for an inline/linked database view."""
+        clean_id = view_id.replace("-", "").lower()
+        self.id_to_base_path[view_id] = base_rel_path
+        self.id_to_base_path[clean_id] = base_rel_path
+        self.id_to_relpath[view_id] = base_rel_path
+        self.id_to_relpath[clean_id] = base_rel_path
+        self.id_to_title[view_id] = title
+        self.id_to_title[clean_id] = title
+        self.canonical_databases[view_id] = canonical
+        self.canonical_databases[clean_id] = canonical
 
     def register_object(self, obj: NotionObject) -> None:
         """Register a Notion object in the global catalog."""
@@ -221,8 +237,22 @@ class HierarchyResolver:
         base_file = parent_folder / f"{safe_name}.base"
         rel_folder = "/".join(parent_titles + [safe_name])
 
+        clean_id = db_id.replace("-", "").lower()
         self.id_to_relpath[db_id] = rel_folder
+        self.id_to_relpath[clean_id] = rel_folder
         self.id_to_title[db_id] = title
+        self.id_to_title[clean_id] = title
+
+        if db_id in self.registry:
+            self.registry[db_id].rel_path = rel_folder
+        if clean_id in self.registry:
+            self.registry[clean_id].rel_path = rel_folder
+        if db_id in self.canonical_databases:
+            self.canonical_databases[db_id].rel_path = rel_folder
+        if clean_id in self.canonical_databases:
+            self.canonical_databases[clean_id].rel_path = rel_folder
+        if title in self.canonical_by_title:
+            self.canonical_by_title[title].rel_path = rel_folder
 
         return entries_folder, csv_file, base_file, rel_folder
 

@@ -141,9 +141,11 @@ class TestUniversityManagementSchema(unittest.TestCase):
         rendered_md = md_exporter.blocks_to_markdown(hub_blocks, target_dir=self.out_root)
 
         # Both the linked view and link_to_page should cleanly link to the canonical Schedule database
-        self.assertIn("[[🏛️ University — backend/📅 Schedule|View of 📅 Schedule]]", rendered_md)
+        self.assertIn("![[🏛️ University — backend/📅 Schedule.base]]", rendered_md)
+        self.assertIn("[↗ View of 📅 Schedule]([[🏛️ University — backend/📅 Schedule.base]])", rendered_md)
         self.assertIn("[[🏛️ University — backend/📅 Schedule|📅 Schedule]]", rendered_md)
         self.assertNotIn("__PENDING__", rendered_md)
+        self.assertNotIn("Untitled", rendered_md)
 
 
 if __name__ == "__main__":

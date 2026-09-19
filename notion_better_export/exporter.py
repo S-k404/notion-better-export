@@ -68,7 +68,57 @@ class NotionBetterExporter:
 
         self.visited_ids: Set[str] = set()
         self.database_rows_cache: Dict[str, List[DatabaseRow]] = {}
+        self.pending_linked_views: List[Dict[str, Any]] = []
+        self.database_schemas: Dict[str, Tuple[Dict[str, Any], Dict[str, str]]] = {}
         self.errors: List[str] = []
+
+    def _get_database_schema(
+        self,
+        db_id: str,
+        data_source_refs: Optional[List[Dict[str, Any]]] = None,
+        db_obj: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[Dict[str, Any], Dict[str, str]]:
+        """Retrieve and cache property schema and prop_slugs for a database or data source."""
+        clean_id = db_id.replace("-", "").lower()
+        if db_id in self.database_schemas:
+            return self.database_schemas[db_id]
+        if clean_id in self.database_schemas:
+            return self.database_schemas[clean_id]
+
+        properties_schema: Dict[str, Any] = {}
+        if db_obj and isinstance(db_obj, dict):
+            properties_schema = db_obj.get("properties") or {}
+        else:
+            try:
+                db_obj = self.client.retrieve_database(db_id)
+                properties_schema = db_obj.get("properties") or {}
+            except Exception:
+                db_obj = {}
+
+        data_source_refs = (
+            data_source_refs
+            or (db_obj.get("data_sources") if isinstance(db_obj, dict) else [])
+            or []
+        )
+        if not properties_schema and data_source_refs:
+            for ds_ref in data_source_refs:
+                if isinstance(ds_ref, dict) and ds_ref.get("id"):
+                    try:
+                        ds = self.client.retrieve_data_source(ds_ref["id"])
+                        ds_props = ds.get("properties") or {}
+                        if ds_props:
+                            properties_schema.update(ds_props)
+                    except Exception:
+                        pass
+
+        prop_slugs = {
+            pname: slugify_property_name(pname)
+            for pname, pinfo in properties_schema.items()
+            if isinstance(pinfo, dict) and pinfo.get("type") != "title"
+        }
+        self.database_schemas[db_id] = (properties_schema, prop_slugs)
+        self.database_schemas[clean_id] = (properties_schema, prop_slugs)
+        return properties_schema, prop_slugs
 
     def run(self) -> Dict[str, Any]:
         """Execute the full export pipeline."""
@@ -189,6 +239,12 @@ class NotionBetterExporter:
                 self._walk_object(
                     obj, self.out_dir / "_unsorted", parent_titles=["_unsorted"]
                 )
+
+        # -------------------------------------------------------------
+        # Step 3.5: Export all pending linked database views as dedicated Bases
+        # -------------------------------------------------------------
+        if not self.dry_run:
+            self._export_pending_linked_views()
 
         # -------------------------------------------------------------
         # Step 4: Rewrite forward links across markdown files
@@ -431,13 +487,6 @@ class NotionBetterExporter:
         """Fetch views from Notion API and return:
         (ordered_property_names_for_csv, list_of_obsidian_view_dicts)
         """
-        slug_to_orig = {slug: orig for orig, slug in prop_slugs.items()}
-
-        id_to_slug: Dict[str, str] = {"title": "file.name"}
-        for pname, pinfo in properties_schema.items():
-            if isinstance(pinfo, dict) and pinfo.get("id"):
-                id_to_slug[pinfo["id"]] = prop_slugs.get(pname, slugify_property_name(pname))
-
         raw_views: List[Dict[str, Any]] = []
         if hasattr(self.client.client, "views"):
             try:
@@ -460,12 +509,32 @@ class NotionBetterExporter:
                         except Exception:
                             continue
 
+        return self._parse_view_details(raw_views, prop_slugs, properties_schema)
+
+    def _parse_view_details(
+        self,
+        raw_views: List[Dict[str, Any]],
+        prop_slugs: Dict[str, str],
+        properties_schema: Dict[str, Any],
+    ) -> Tuple[List[str], List[Dict[str, Any]]]:
+        """Convert a list of raw Notion view objects into Obsidian Bases views."""
+        slug_to_orig = {slug: orig for orig, slug in prop_slugs.items()}
+
+        id_to_slug: Dict[str, str] = {"title": "file.name"}
+        for pname, pinfo in properties_schema.items():
+            if isinstance(pinfo, dict) and pinfo.get("id"):
+                id_to_slug[pinfo["id"]] = prop_slugs.get(pname, slugify_property_name(pname))
+
         obsidian_views: List[Dict[str, Any]] = []
         primary_ordered_prop_names: List[str] = []
 
         for v_stub in raw_views:
             try:
-                v_detail = self.client.retry(self.client.client.views.retrieve, v_stub["id"])
+                if "configuration" in v_stub:
+                    v_detail = v_stub
+                else:
+                    v_detail = self.client.retry(self.client.client.views.retrieve, v_stub["id"])
+
                 v_name = v_detail.get("name") or "Table"
                 v_config = v_detail.get("configuration", {})
                 v_props = v_config.get("properties", [])
@@ -506,8 +575,12 @@ class NotionBetterExporter:
                     if slug:
                         view_sorts.append({"property": slug, "direction": direction})
 
+                vtype = v_detail.get("type", "table")
+                if vtype not in ("table", "board", "list", "calendar"):
+                    vtype = "table"
+
                 obsidian_view: Dict[str, Any] = {
-                    "type": "table",
+                    "type": vtype,
                     "name": v_name,
                     "order": view_order,
                 }
@@ -551,6 +624,72 @@ class NotionBetterExporter:
                     primary_ordered_prop_names.append(p)
 
         return primary_ordered_prop_names, obsidian_views
+
+    def _export_pending_linked_views(self) -> None:
+        """Generate dedicated .base files for linked database views discovered across pages."""
+        if not self.write_base or not self.pending_linked_views:
+            return
+
+        logger.info(
+            "Generating dedicated Bases for %d linked database view(s)...",
+            len(self.pending_linked_views),
+        )
+
+        for item in self.pending_linked_views:
+            bid = item["bid"]
+            canonical = item["canonical"]
+            child_folder: Path = item["child_folder"]
+            parent_titles: List[str] = item["parent_titles"]
+            raw_views: List[Dict[str, Any]] = item["raw_views"]
+            ds_refs: List[Dict[str, Any]] = item["ds_refs"]
+
+            latest_canonical = self.resolver.get_canonical_database(canonical.id) or canonical
+            target_title = latest_canonical.title
+            canonical_rel = (
+                latest_canonical.rel_path
+                or self.resolver.id_to_relpath.get(latest_canonical.id, "")
+                or self.resolver.id_to_relpath.get(latest_canonical.id.replace("-", "").lower(), "")
+            )
+            if not canonical_rel:
+                by_title = self.resolver.canonical_by_title.get(target_title)
+                if by_title and by_title.rel_path:
+                    canonical_rel = by_title.rel_path
+                    latest_canonical = by_title
+
+            if not canonical_rel:
+                for rid, rpath in self.resolver.id_to_relpath.items():
+                    if rpath.endswith(f"/{target_title}") or rpath == target_title:
+                        canonical_rel = rpath
+                        break
+
+            view_base_name = self.resolver.disambiguate_name(
+                child_folder, f"View of {target_title}", bid
+            )
+            view_base_file = child_folder / f"{view_base_name}.base"
+            view_rel_path = "/".join(parent_titles + [view_base_name])
+
+            self.resolver.register_linked_view_base(
+                bid, view_rel_path, view_base_name, latest_canonical
+            )
+
+            props_schema, p_slugs = self._get_database_schema(
+                latest_canonical.id, ds_refs
+            )
+
+            ordered_props, obsidian_views = self._parse_view_details(
+                raw_views, p_slugs, props_schema
+            )
+
+            leaf_folder = Path(canonical_rel).name if canonical_rel else target_title
+            self.base_exporter.write_base_file(
+                view_base_file,
+                database_title=view_base_name,
+                folder_leaf_name=leaf_folder,
+                prop_slugs=p_slugs,
+                rel_folder=canonical_rel,
+                views_config=obsidian_views,
+            )
+            logger.info("Exported linked view Base: %s -> %s", view_rel_path, canonical_rel)
 
     def _walk_children_blocks(
         self, block_id: str, child_folder: Path, parent_titles: List[str]
@@ -603,11 +742,33 @@ class NotionBetterExporter:
                         if canonical:
                             self.resolver.canonical_databases[bid] = canonical
                             self.resolver.canonical_databases[bid.replace("-", "").lower()] = canonical
-                        logger.info(
-                            "Skipping duplicate export for linked view of canonical database '%s' (%s)",
-                            target_name,
-                            bid,
-                        )
+
+                            raw_views = []
+                            if hasattr(self.client.client, "views"):
+                                try:
+                                    v_res = self.client.retry(
+                                        self.client.client.views.list, database_id=bid
+                                    )
+                                    raw_views = v_res.get("results", [])
+                                except Exception as e:
+                                    logger.debug("Failed listing views for %s: %s", bid, e)
+
+                            self.pending_linked_views.append(
+                                {
+                                    "bid": bid,
+                                    "canonical": canonical,
+                                    "child_folder": child_folder,
+                                    "parent_titles": parent_titles,
+                                    "raw_views": raw_views,
+                                    "ds_refs": ds_refs,
+                                    "block_title": block_title,
+                                }
+                            )
+                            logger.info(
+                                "Enqueued linked view of canonical database '%s' (%s)",
+                                target_name,
+                                bid,
+                            )
                         continue
 
                     # This is a canonical database with a real title!

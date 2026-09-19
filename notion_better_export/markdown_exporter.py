@@ -137,20 +137,21 @@ class MarkdownExporter:
                 continue
 
             if btype == "child_database":
-                # Embedded / child database view
+                # Embedded / child database view — render as embedded Obsidian Base
                 block_title = data.get("title", "")
-                rel = self.resolver.id_to_relpath.get(block["id"])
                 canonical = self.resolver.get_canonical_database(block["id"])
+                base_rel = self.resolver.id_to_base_path.get(block["id"]) or (
+                    self.resolver.id_to_base_path.get(block["id"].replace("-", "").lower())
+                )
+                rel = base_rel or (canonical.rel_path if canonical else self.resolver.id_to_relpath.get(block["id"]))
+                display_title = block_title or (canonical.title if canonical else self.resolver.id_to_title.get(block["id"], "Database"))
+                if display_title in ("Untitled", "Untitled Database"):
+                    display_title = canonical.title if (canonical and canonical.title not in ("Untitled", "Untitled Database")) else "Database"
 
-                if canonical and canonical.rel_path:
-                    display_title = block_title or canonical.title
-                    lines.append(f"{pad}- 📊 [[{canonical.rel_path}|{display_title}]]")
-                elif rel:
-                    display_title = block_title or self.resolver.id_to_title.get(block["id"], "Database")
-                    lines.append(f"{pad}- 📊 [[{rel}|{display_title}]]")
+                if rel:
+                    lines.append(f"\n{pad}[↗ {display_title}]([[{rel}.base]])\n\n{pad}![[{rel}.base]]\n")
                 else:
-                    display_title = block_title or "Database"
-                    lines.append(f"{pad}- 📊 [[__PENDING__:{block['id']}|{display_title}]]")
+                    lines.append(f"\n{pad}[[__EMBED_BASE__:{block['id']}|{display_title}]]\n")
                 continue
 
             if btype == "link_to_page":
@@ -315,8 +316,9 @@ class MarkdownExporter:
         return fm
 
     def rewrite_forward_links(self, out_dir: Path) -> None:
-        """Second-pass: Rewrite [[__PENDING__:id|title]] placeholders once all IDs are known."""
-        pattern = re.compile(r"\[\[__PENDING__:([^|]+)\|([^\]]*)\]\]")
+        """Second-pass: Rewrite [[__PENDING__:id|title]] and [[__EMBED_BASE__:id|title]] placeholders."""
+        pattern_embed = re.compile(r"\[\[__EMBED_BASE__:([^|]+)\|([^\]]*)\]\]")
+        pattern_pending = re.compile(r"\[\[__PENDING__:([^|]+)\|([^\]]*)\]\]")
 
         for md_path in out_dir.rglob("*.md"):
             try:
@@ -324,17 +326,46 @@ class MarkdownExporter:
             except Exception:
                 continue
 
-            if "__PENDING__" not in text:
+            if "__EMBED_BASE__" not in text and "__PENDING__" not in text:
                 continue
 
-            def replacer(m):
+            def embed_replacer(m):
                 target_id = m.group(1)
                 label = m.group(2)
+                base_rel = self.resolver.id_to_base_path.get(target_id) or self.resolver.id_to_base_path.get(
+                    target_id.replace("-", "").lower()
+                )
+                canonical = self.resolver.get_canonical_database(target_id)
+
+                if canonical and canonical.title and canonical.title not in ("Untitled", "Untitled Database"):
+                    display_title = canonical.title
+                elif label and label not in ("Untitled", "Database"):
+                    display_title = label
+                else:
+                    display_title = self.resolver.id_to_title.get(target_id, "Database")
+
+                target_rel = base_rel or (canonical.rel_path if canonical else self.resolver.id_to_relpath.get(target_id))
+                if target_rel:
+                    return f"[↗ {display_title}]([[{target_rel}.base]])\n\n![[{target_rel}.base]]"
+                return f"[↗ {display_title}]"
+
+            def pending_replacer(m):
+                target_id = m.group(1)
+                label = m.group(2)
+                canonical = self.resolver.get_canonical_database(target_id)
+                if canonical and canonical.rel_path:
+                    title = canonical.title if canonical.title not in ("Untitled", "Untitled Database") else label
+                    return f"[[{canonical.rel_path}|{title}]]"
+
                 rel = self.resolver.id_to_relpath.get(target_id)
                 if rel:
-                    return f"[[{rel}|{label}]]"
-                return f"[[{label}]]"
+                    clean_label = label if label not in ("Untitled", "") else self.resolver.id_to_title.get(target_id, "Note")
+                    return f"[[{rel}|{clean_label}]]"
 
-            new_text = pattern.sub(replacer, text)
+                clean_label = label if label not in ("Untitled", "") else self.resolver.id_to_title.get(target_id, "Note")
+                return f"[[{clean_label}]]"
+
+            new_text = pattern_embed.sub(embed_replacer, text)
+            new_text = pattern_pending.sub(pending_replacer, new_text)
             if new_text != text:
                 md_path.write_text(new_text, encoding="utf-8")
