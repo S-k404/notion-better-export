@@ -51,3 +51,11 @@ Issues = "https://github.com/S-k404/notion-better-export/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["notion_better_export"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]

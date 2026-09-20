@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Any
 from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 
 @dataclass
@@ -16,7 +16,7 @@ class NotionObject:
     url: str = ""
     icon: str = ""
     properties: Dict[str, Any] = field(default_factory=dict)
-    
+
     # Hierarchy and resolution fields
     rel_path: str = ""               # Vault-relative path without extension
     file_path: Optional[Path] = None  # Full output file path

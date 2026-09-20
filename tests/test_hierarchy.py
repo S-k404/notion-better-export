@@ -1,11 +1,11 @@
 import unittest
 from pathlib import Path
+
 from notion_better_export.hierarchy import (
     HierarchyResolver,
+    extract_database_title,
     sanitize_filename,
     slugify_property_name,
-    extract_database_title,
-    extract_page_title,
 )
 from notion_better_export.models import NotionObject
 

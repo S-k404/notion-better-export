@@ -1,5 +1,6 @@
 import logging
 from typing import Any, Dict, List, Optional, Tuple
+
 from notion_better_export.hierarchy import extract_plain_text
 from notion_better_export.models import DatabaseRow
 

@@ -1,7 +1,7 @@
 import csv
-import io
 import unittest
 from pathlib import Path
+
 from notion_better_export.csv_exporter import CsvExporter
 from notion_better_export.hierarchy import HierarchyResolver
 from notion_better_export.models import DatabaseRow

@@ -1,10 +1,11 @@
+import logging
 import os
 import re
 import urllib.parse
 import urllib.request
-import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
 try:
     import yaml
 except ImportError:
@@ -322,7 +323,7 @@ class MarkdownExporter:
                 if btype == "toggle":
                     lines.append(f"{pad}</details>")
 
-        return "\n".join(l for l in lines if l is not None)
+        return "\n".join(line for line in lines if line is not None)
 
     def table_rows_to_markdown(self, rows: List[Dict[str, Any]]) -> str:
         """Render table row blocks into a markdown table."""

@@ -1,6 +1,7 @@
-import time
 import logging
+import time
 from typing import Any, Callable, Dict, List, Optional
+
 from notion_client import Client
 from notion_client.errors import APIResponseError
 

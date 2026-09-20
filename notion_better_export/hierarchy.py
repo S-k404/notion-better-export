@@ -1,7 +1,8 @@
 import re
 import unicodedata
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple, Any
+from typing import Any, Dict, List, Optional, Tuple
+
 from notion_better_export.models import NotionObject
 
 

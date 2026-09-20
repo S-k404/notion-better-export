@@ -2,6 +2,7 @@ import json
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock
+
 from notion_client.errors import APIResponseError
 
 from notion_better_export.client import NotionApiClient

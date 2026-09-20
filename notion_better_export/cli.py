@@ -1,11 +1,12 @@
 import argparse
 import getpass
+import logging
 import os
 import stat
 import sys
-import logging
 from pathlib import Path
 from typing import Optional
+
 from notion_client.errors import APIResponseError
 from rich.console import Console
 from rich.logging import RichHandler

@@ -2,6 +2,7 @@ import csv
 import logging
 from pathlib import Path
 from typing import Dict, List, Optional
+
 from notion_better_export.hierarchy import HierarchyResolver
 from notion_better_export.models import DatabaseRow
 
