@@ -6,7 +6,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Python: 3.10+](https://img.shields.io/badge/Python-3.10%2B-brightgreen.svg)](https://www.python.org/)
-[![CI](https://github.com/shamitkumar4/notion-better-export/actions/workflows/ci.yml/badge.svg)](https://github.com/shamitkumar4/notion-better-export/actions/workflows/ci.yml)
+[![CI](https://github.com/S-k404/notion-better-export/actions/workflows/ci.yml/badge.svg)](https://github.com/S-k404/notion-better-export/actions/workflows/ci.yml)
 
 *Export your entire Notion workspace into Obsidian without flat directory dumps, broken relation UUIDs, or empty database placeholders.*
 
@@ -46,21 +46,21 @@ When exporting large workspaces containing nested pages and relational databases
 
 ### Option 1: Using `pipx` (Recommended for CLI use)
 ```bash
-pipx install git+https://github.com/shamitkumar4/notion-better-export.git
+pipx install git+https://github.com/S-k404/notion-better-export.git
 ```
 
 ### Option 2: Using `pip` or `uv`
 ```bash
 # Using standard pip
-pip install git+https://github.com/shamitkumar4/notion-better-export.git
+pip install git+https://github.com/S-k404/notion-better-export.git
 
 # Or with uv
-uv tool install git+https://github.com/shamitkumar4/notion-better-export.git
+uv tool install git+https://github.com/S-k404/notion-better-export.git
 ```
 
 ### Option 3: From Source
 ```bash
-git clone https://github.com/shamitkumar4/notion-better-export.git
+git clone https://github.com/S-k404/notion-better-export.git
 cd notion-better-export
 pip install -e .
 ```
