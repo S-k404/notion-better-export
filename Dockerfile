@@ -14,5 +14,9 @@ RUN pip install --no-cache-dir .
 RUN useradd --create-home --uid 1000 nbe && mkdir /vault && chown nbe /vault
 USER nbe
 
+# `auto` mode (and any relative path) lands in the mounted volume, not the image
+ENV EXPORT_OUT_DIR="/vault/Notion Better Export"
+WORKDIR /vault
+
 ENTRYPOINT ["notion-better-export"]
 CMD ["--help"]
