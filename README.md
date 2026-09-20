@@ -44,28 +44,30 @@ When exporting large workspaces containing nested pages and relational databases
 
 ## 📦 Installation
 
-### Option 1: Using `pipx` (Recommended for CLI use)
+Requires Python 3.10+. The easiest, safest way is **pipx** (it gives the tool its own isolated environment and puts `nbe` on your PATH):
+
 ```bash
+# macOS:            brew install pipx
+# Linux / Windows:  python3 -m pip install --user pipx
+pipx ensurepath        # one-time; then open a NEW terminal window
 pipx install git+https://github.com/S-k404/notion-better-export.git
+nbe --help             # check it worked
 ```
 
-### Option 2: Using `pip` or `uv`
-```bash
-# Using standard pip
-pip install git+https://github.com/S-k404/notion-better-export.git
+Prefer `uv`? `uv tool install git+https://github.com/S-k404/notion-better-export.git`
 
-# Or with uv
-uv tool install git+https://github.com/S-k404/notion-better-export.git
-```
-
-### Option 3: From Source
+**From source** (for development):
 ```bash
 git clone https://github.com/S-k404/notion-better-export.git
 cd notion-better-export
-pip install -e .
+uv sync && uv run nbe --help        # or: python3 -m venv .venv && .venv/bin/pip install -e .
 ```
 
-Both `notion-better-export` and the shorthand alias `nbe` will be available in your terminal.
+Both `notion-better-export` and the shorthand `nbe` are installed.
+
+> ⚠️ **Don't use plain `pip install` on macOS/Linux system Python.** Homebrew and most Linux distros refuse it (`externally-managed-environment`). Use `pipx` or `uv` as above, or a virtual environment.
+
+**Upgrade:** `pipx upgrade notion-better-export` &nbsp;·&nbsp; **Uninstall:** `pipx uninstall notion-better-export`
 
 ---
 
@@ -215,6 +217,8 @@ The image runs as a non-root user and the token is passed at run time; it is nev
 
 | Symptom | Fix |
 | :--- | :--- |
+| `command not found: nbe` | It isn't installed, or your PATH is stale. Install with `pipx` (see above), run `pipx ensurepath`, and open a **new** terminal. If you used a venv, activate it first. |
+| `externally-managed-environment` | Your system Python blocks `pip install`. Use `pipx` or `uv tool install` instead. |
 | `No Notion token found` | Run `nbe init`, or set `NOTION_TOKEN` / create `.env`. |
 | `401 unauthorized` | Token is wrong or was rotated. Run `nbe init` again. |
 | Export is empty / pages missing | The integration only sees connected pages: page → `•••` → **Connections**. |
