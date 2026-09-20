@@ -56,7 +56,9 @@ def read_token_from_file(path: Path) -> str:
         if line.startswith("export "):
             line = line[len("export "):].lstrip()
         if line.startswith("NOTION_TOKEN="):
-            return line.split("=", 1)[1].strip().strip('"').strip("'")
+            value = line.split("=", 1)[1].strip().strip('"').strip("'")
+            # An unedited copy of .env.sample is "no token", not a bad token.
+            return "" if "your_notion_integration_token_here" in value else value
     return ""
 
 

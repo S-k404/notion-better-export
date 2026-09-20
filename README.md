@@ -200,6 +200,7 @@ nbe fix --dir "/path/to/Obsidian Vault/Notion Export"
 
 ```bash
 cp .env.sample .env                    # add your NOTION_TOKEN
+mkdir -p vault                         # create it yourself so it isn't root-owned on Linux
 docker compose build
 docker compose run --rm notion-export  # exports into ./vault/Notion Better Export
 VAULT_DIR="$HOME/Obsidian Vault" docker compose run --rm notion-export   # or into your vault

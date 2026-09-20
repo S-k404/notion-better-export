@@ -100,6 +100,12 @@ class TokenDiscoveryTests(unittest.TestCase):
             f.write_text('# c\nexport NOTION_TOKEN="ntn_quoted"\n')
             self.assertEqual(cli.read_token_from_file(f), "ntn_quoted")
 
+    def test_unedited_sample_placeholder_is_not_a_token(self):
+        with tempfile.TemporaryDirectory() as d:
+            f = Path(d) / ".env"
+            f.write_text("NOTION_TOKEN=ntn_your_notion_integration_token_here\n")
+            self.assertEqual(cli.read_token_from_file(f), "")
+
     def test_missing_file_returns_empty(self):
         self.assertEqual(cli.read_token_from_file(Path("/nonexistent/.env")), "")
 
