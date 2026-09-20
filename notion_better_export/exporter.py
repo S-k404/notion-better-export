@@ -3,8 +3,8 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
-from notion_better_export.base_exporter import BaseExporter
-from notion_better_export.client import NotionApiClient
+from notion_better_export.base_exporter import BaseExporter, build_view_order, map_view_type
+from notion_better_export.client import DEFAULT_REQUESTS_PER_SECOND, NotionApiClient
 from notion_better_export.csv_exporter import CsvExporter
 from notion_better_export.database import build_database_row
 from notion_better_export.hierarchy import (
@@ -36,8 +36,9 @@ class NotionBetterExporter:
         write_csv: bool = True,
         write_base: bool = True,
         date_prefix_rows: bool = False,
+        requests_per_second: float = DEFAULT_REQUESTS_PER_SECOND,
     ):
-        self.client = NotionApiClient(token)
+        self.client = NotionApiClient(token, requests_per_second=requests_per_second)
         self.out_dir = Path(out_dir).resolve()
         self.skip_databases = set(skip_databases or [])
         self.max_rows_per_db = max_rows_per_db
@@ -560,11 +561,9 @@ class NotionBetterExporter:
                         if slug not in hidden_slugs and slug in prop_slugs.values():
                             hidden_slugs.append(slug)
 
-                remaining_slugs = [
-                    s for s in prop_slugs.values()
-                    if s not in visible_slugs and s not in hidden_slugs
-                ]
-                view_order = ["file.name"] + visible_slugs + hidden_slugs + remaining_slugs
+                view_order = build_view_order(
+                    visible_slugs, hidden_slugs, list(prop_slugs.values())
+                )
 
                 view_sorts: List[Dict[str, str]] = []
                 for s in (v_detail.get("sorts") or []):
@@ -574,9 +573,7 @@ class NotionBetterExporter:
                     if slug:
                         view_sorts.append({"property": slug, "direction": direction})
 
-                vtype = v_detail.get("type", "table")
-                if vtype not in ("table", "board", "list", "calendar"):
-                    vtype = "table"
+                vtype = map_view_type(v_detail.get("type"))
 
                 obsidian_view: Dict[str, Any] = {
                     "type": vtype,

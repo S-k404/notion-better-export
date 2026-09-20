@@ -37,15 +37,7 @@ If adding new functionality or fixing edge cases, please add corresponding unit 
 
 ## Architecture Overview
 
-- **`client.py`**: Rate-limited (2.8 req/sec) Notion API wrapper with exponential backoff on 429 and graceful database/data source 404 recovery.
-- **`hierarchy.py`**: Disambiguates folders/filenames and maps global Notion UUIDs to true vault paths and titles.
-- **`database.py`**: Parses rich text, dates, relations, rollups, and Formula 2.0 returns into clean representations.
-- **`base_exporter.py`**: Generates Obsidian Bases (`.base`) files with Notion column ordering, visibility, and sorting.
-- **`csv_exporter.py`**: Exports linked CSVs with resolved relation wikilinks and note links.
-- **`markdown_exporter.py`**: Converts blocks into Obsidian-flavored Markdown and rewrites forward links.
-- **`post_processor.py`**: Offline fixer for existing exports to repair broken UUIDs in CSVs, Markdown, and Bases.
-- **`exporter.py`**: Main coordinator orchestrating tree walking, view extraction, and file generation.
-- **`cli.py`**: Rich CLI entry points (`notion-better-export` and `nbe`).
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Please read [SECURITY.md](SECURITY.md) before touching token handling or downloads, and never commit a real token, even in tests.
 
 ---
 

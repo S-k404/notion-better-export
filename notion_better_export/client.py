@@ -9,31 +9,47 @@ logger = logging.getLogger("notion_better_export")
 logging.getLogger("notion_client").setLevel(logging.ERROR)
 
 
+NOTION_MAX_REQUESTS_PER_SECOND = 3.0
+DEFAULT_REQUESTS_PER_SECOND = 2.8
+
+
 class NotionRateLimiter:
     """Enforces Notion's average rate limit (3 requests per second) proactively
     to prevent HTTP 429 errors and API throttling delays.
+
+    The rate is clamped to Notion's documented ceiling so it can be lowered (for
+    shared integrations) but never raised past what the API allows.
     """
 
-    def __init__(self, requests_per_second: float = 2.8):
-        self.interval = 1.0 / requests_per_second
+    def __init__(self, requests_per_second: float = DEFAULT_REQUESTS_PER_SECOND):
+        if requests_per_second <= 0:
+            raise ValueError("requests_per_second must be greater than 0")
+        rate = min(requests_per_second, NOTION_MAX_REQUESTS_PER_SECOND)
+        self.interval = 1.0 / rate
         self.last_request_time = 0.0
 
     def wait(self) -> None:
-        now = time.time()
+        now = time.monotonic()
         elapsed = now - self.last_request_time
         if elapsed < self.interval:
             time.sleep(self.interval - elapsed)
-        self.last_request_time = time.time()
+        self.last_request_time = time.monotonic()
 
 
 class NotionApiClient:
     """Robust Notion API Client with proactive rate limiting and exponential backoff."""
 
-    def __init__(self, token: str, max_retries: int = 5, base_delay: float = 1.0):
+    def __init__(
+        self,
+        token: str,
+        max_retries: int = 5,
+        base_delay: float = 1.0,
+        requests_per_second: float = DEFAULT_REQUESTS_PER_SECOND,
+    ):
         self.client = Client(auth=token)
         self.max_retries = max_retries
         self.base_delay = base_delay
-        self.rate_limiter = NotionRateLimiter(requests_per_second=2.8)
+        self.rate_limiter = NotionRateLimiter(requests_per_second=requests_per_second)
 
     def retry(self, func: Callable, *args, **kwargs) -> Any:
         """Executes API function with proactive pacing and exponential backoff on 429."""
@@ -45,8 +61,7 @@ class NotionApiClient:
             except APIResponseError as err:
                 if err.status == 429 or "rate_limited" in str(err).lower():
                     # Check for Retry-After header or fallback
-                    retry_after = getattr(err, "headers", {}).get("retry-after")
-                    wait_sec = float(retry_after) if retry_after else max(delay, 2.0)
+                    wait_sec = self._retry_after_seconds(err, default=max(delay, 2.0))
                     logger.warning(
                         "Rate limited by Notion API (attempt %d/%d). Sleeping %.2fs...",
                         attempt + 1,
@@ -77,6 +92,20 @@ class NotionApiClient:
                     continue
                 raise
         return func(*args, **kwargs)
+
+    @staticmethod
+    def _retry_after_seconds(err: APIResponseError, default: float) -> float:
+        """Honor Notion's Retry-After header when present and numeric."""
+        headers = getattr(err, "headers", None)
+        try:
+            value = headers.get("retry-after") if headers else None
+            return max(float(value), 0.0) if value is not None else default
+        except (TypeError, ValueError):
+            return default
+
+    def whoami(self) -> Dict[str, Any]:
+        """Return the integration's bot user; raises APIResponseError on a bad token."""
+        return self.retry(self.client.users.me)
 
     def search_all(self, filter_type: Optional[str] = None) -> List[Dict[str, Any]]:
         """Search for all accessible objects in the workspace."""

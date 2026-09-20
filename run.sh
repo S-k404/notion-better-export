@@ -1,38 +1,15 @@
 #!/usr/bin/env bash
-set -e
+# Convenience launcher: ./run.sh [auto|export|fix|init|test] [flags]
+# The CLI reads NOTION_TOKEN from the environment, ./.env, or `nbe init` on its own,
+# so this script never parses or exports secrets.
+set -euo pipefail
 
-DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$DIR"
+cd "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Safely load environment variables without eval/source syntax issues
-load_env_file() {
-  local env_file="$1"
-  if [ -f "$env_file" ]; then
-    while IFS= read -r line || [ -n "$line" ]; do
-      # Strip carriage return and leading/trailing whitespace
-      line="$(echo "$line" | tr -d '\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
-      # Skip comments and empty lines
-      if [[ "$line" =~ ^# ]] || [[ -z "$line" ]]; then
-        continue
-      fi
-      # Only export lines with KEY=VALUE
-      if [[ "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
-        key="${line%%=*}"
-        val="${line#*=}"
-        # Strip surrounding quotes if present
-        val="${val#\"}"
-        val="${val%\"}"
-        val="${val#\'}"
-        val="${val%\'}"
-        if [ -z "${!key}" ]; then
-          export "$key"="$val"
-        fi
-      fi
-    done < "$env_file"
-  fi
-}
-
-load_env_file ".env"
-load_env_file "../Notoma/.env"
-
-exec python3 -m notion_better_export.cli "$@"
+if command -v uv >/dev/null 2>&1; then
+  exec uv run python -m notion_better_export.cli "$@"
+elif [ -x .venv/bin/python ]; then
+  exec .venv/bin/python -m notion_better_export.cli "$@"
+else
+  exec python3 -m notion_better_export.cli "$@"
+fi
