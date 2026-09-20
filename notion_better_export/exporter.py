@@ -1,7 +1,7 @@
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from notion_better_export.base_exporter import BaseExporter, build_view_order, map_view_type
 from notion_better_export.client import DEFAULT_REQUESTS_PER_SECOND, NotionApiClient
