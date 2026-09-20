@@ -9,6 +9,36 @@ except ImportError:
 logger = logging.getLogger("notion_better_export")
 
 
+# Obsidian's core Bases only ship these view types; Notion's board/gallery/calendar/
+# timeline layouts have no direct equivalent, so they map to the closest one.
+_VIEW_TYPE_MAP = {
+    "table": "table",
+    "list": "list",
+    "gallery": "cards",
+    "board": "cards",
+    "calendar": "table",
+    "timeline": "table",
+}
+
+
+def map_view_type(notion_view_type: Optional[str]) -> str:
+    """Map a Notion view type onto a view type Obsidian Bases can render."""
+    return _VIEW_TYPE_MAP.get(notion_view_type or "table", "table")
+
+
+def build_view_order(
+    visible_slugs: List[str], hidden_slugs: List[str], all_slugs: List[str]
+) -> List[str]:
+    """Column order for a Bases view: `file.name` plus the columns Notion shows.
+
+    Columns hidden in the Notion view are left out. If the view carried no
+    property configuration at all, every property is shown rather than none.
+    """
+    if not visible_slugs and not hidden_slugs:
+        return ["file.name"] + list(all_slugs)
+    return ["file.name"] + list(visible_slugs)
+
+
 class BaseExporter:
     """Generates Obsidian Bases (.base) files with the correct schema and folder filters."""
 

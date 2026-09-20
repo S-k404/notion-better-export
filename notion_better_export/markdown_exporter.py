@@ -1,5 +1,6 @@
 import os
 import re
+import urllib.parse
 import urllib.request
 import logging
 from pathlib import Path
@@ -17,6 +18,19 @@ from notion_better_export.hierarchy import (
 from notion_better_export.models import DatabaseRow
 
 logger = logging.getLogger("notion_better_export")
+
+ASSET_TIMEOUT_SECONDS = 30
+MAX_ASSET_BYTES = 200 * 1024 * 1024
+
+
+def redact_url(url: str) -> str:
+    """Drop the query string and fragment from a URL before logging it.
+
+    Notion's file URLs are pre-signed S3 links whose query string carries the
+    credentials (X-Amz-Signature etc.), so they must never reach log output.
+    """
+    parts = urllib.parse.urlsplit(url)
+    return urllib.parse.urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
 
 
 class MarkdownExporter:
@@ -124,19 +138,39 @@ class MarkdownExporter:
     def maybe_download_asset(
         self, url: str, target_dir: Path, name_hint: str
     ) -> Optional[str]:
-        """Download asset to _assets folder and return relative markdown path."""
+        """Download asset to _assets folder and return relative markdown path.
+
+        Only http(s) URLs are fetched (never file:// or ftp://), with a timeout and
+        a size cap. Signed query strings are never written to the logs.
+        """
         if not self.download_assets or not url:
+            return None
+        safe_url = redact_url(url)
+        parsed = urllib.parse.urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            logger.warning("Skipping asset with unsupported URL scheme: %s", safe_url)
             return None
         try:
             assets_dir = target_dir / "_assets"
             assets_dir.mkdir(parents=True, exist_ok=True)
             clean_hint = sanitize_filename(name_hint, maxlen=50)
-            ext = os.path.splitext(url.split("?")[0])[1] or ".png"
+            ext = os.path.splitext(parsed.path)[1].lower()
+            if not re.fullmatch(r"\.[a-z0-9]{1,8}", ext):
+                ext = ".png"
             dest_file = assets_dir / f"{clean_hint}{ext}"
-            urllib.request.urlretrieve(url, dest_file)
+            with urllib.request.urlopen(url, timeout=ASSET_TIMEOUT_SECONDS) as resp:
+                length = resp.headers.get("Content-Length")
+                if length and length.isdigit() and int(length) > MAX_ASSET_BYTES:
+                    logger.warning("Skipping oversized asset (%s bytes): %s", length, safe_url)
+                    return None
+                data = resp.read(MAX_ASSET_BYTES + 1)
+            if len(data) > MAX_ASSET_BYTES:
+                logger.warning("Skipping oversized asset: %s", safe_url)
+                return None
+            dest_file.write_bytes(data)
             return f"_assets/{dest_file.name}"
         except Exception as e:
-            logger.warning("Failed to download asset %s: %s", url, e)
+            logger.warning("Failed to download asset %s: %s", safe_url, e)
             return None
 
     def blocks_to_markdown(

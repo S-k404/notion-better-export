@@ -1,15 +1,27 @@
 import argparse
+import getpass
 import os
+import stat
 import sys
 import logging
 from pathlib import Path
+from typing import Optional
+from notion_client.errors import APIResponseError
 from rich.console import Console
 from rich.logging import RichHandler
 
+from notion_better_export.client import (
+    DEFAULT_REQUESTS_PER_SECOND,
+    NOTION_MAX_REQUESTS_PER_SECOND,
+    NotionApiClient,
+)
 from notion_better_export.exporter import NotionBetterExporter
 from notion_better_export.post_processor import ExportPostProcessor
 
 console = Console()
+
+TOKEN_PREFIXES = ("ntn_", "secret_")
+DEFAULT_VAULT_FOLDER = "Notion Better Export"
 
 
 def setup_logging(verbose: bool = False) -> None:
@@ -20,64 +32,150 @@ def setup_logging(verbose: bool = False) -> None:
         datefmt="[%X]",
         handlers=[RichHandler(console=console, rich_tracebacks=True, show_path=False)],
     )
+    # httpx logs full request URLs at INFO; keep them out of the output.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
-def find_default_token() -> str:
-    """Find NOTION_TOKEN from environment, current .env, or adjacent Notoma/.env."""
-    token = os.environ.get("NOTION_TOKEN")
-    if token:
-        return token
+def user_config_path() -> Path:
+    """Per-user file where `nbe init` stores the token (works for pipx/pip installs)."""
+    if os.name == "nt":
+        base = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
+    else:
+        base = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+    return base / "notion-better-export" / "env"
 
-    # Check local .env
-    local_env = Path(".env")
-    if local_env.exists():
-        for line in local_env.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if line.startswith("NOTION_TOKEN="):
-                return line.split("=", 1)[1].strip().strip('"').strip("'")
 
-    # Check ../Notoma/.env
-    notoma_env = Path("../Notoma/.env")
-    if notoma_env.exists():
-        for line in notoma_env.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if line.startswith("NOTION_TOKEN="):
-                return line.split("=", 1)[1].strip().strip('"').strip("'")
-
+def read_token_from_file(path: Path) -> str:
+    """Read NOTION_TOKEN=... from a dotenv-style file; returns '' if absent."""
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return ""
+    for line in lines:
+        line = line.strip()
+        if line.startswith("export "):
+            line = line[len("export "):].lstrip()
+        if line.startswith("NOTION_TOKEN="):
+            return line.split("=", 1)[1].strip().strip('"').strip("'")
     return ""
 
 
+def find_default_token() -> str:
+    """Find the Notion token: $NOTION_TOKEN, then ./.env, then the `nbe init` config."""
+    token = os.environ.get("NOTION_TOKEN")
+    if token:
+        return token.strip()
+    return read_token_from_file(Path(".env")) or read_token_from_file(user_config_path())
+
+
 def resolve_auto_out_dir(custom_out: str = "") -> Path:
-    """Intelligently determine the optimal Obsidian vault export directory."""
+    """Determine where `auto` mode writes.
+
+    Priority: --out, $EXPORT_OUT_DIR, $VAULT_PATH (exports into a
+    "Notion Better Export" folder inside the vault), then ./output.
+    """
     if custom_out:
         return Path(custom_out).expanduser().resolve()
 
-    # 1. Check EXPORT_OUT_DIR env var
     env_out = os.environ.get("EXPORT_OUT_DIR")
-    if env_out and env_out != "./output":
+    if env_out:
         return Path(env_out).expanduser().resolve()
 
-    # 2. Check VAULT_PATH env var
     vault_path = os.environ.get("VAULT_PATH")
     if vault_path:
         vp = Path(vault_path).expanduser().resolve()
-        # If pointing to a test folder or general vault, export to "Notion Better Export"
-        if vp.name in ("Noma Test", "Notion Export"):
-            return vp.parent / "Notion Better Export"
-        if "Obsidian Vault" in str(vp):
-            return vp if vp.name == "Notion Better Export" else vp / "Notion Better Export"
-        return vp
-
-    # 3. Standard default for user's obsidian vault
-    candidate = Path("/Users/shamit/Documents/Docker/Obsidian/Obsidian Vault/Notion Better Export")
-    if candidate.parent.exists():
-        return candidate
+        return vp if vp.name == DEFAULT_VAULT_FOLDER else vp / DEFAULT_VAULT_FOLDER
 
     return Path("./output").resolve()
 
 
+def check_token_or_exit(token: str) -> None:
+    """Warn about odd-looking tokens without ever echoing the value."""
+    if not token.startswith(TOKEN_PREFIXES):
+        console.print(
+            "[yellow]Warning: token does not start with ntn_ or secret_; "
+            "double-check you copied the Internal Integration Secret.[/yellow]"
+        )
+
+
+def run_export(exporter: NotionBetterExporter) -> dict:
+    """Run an exporter, turning the common failures into actionable messages."""
+    try:
+        return exporter.run()
+    except APIResponseError as err:
+        if err.status == 401:
+            console.print(
+                "[red]Notion rejected the token (401 unauthorized). "
+                "Re-run `nbe init` or check NOTION_TOKEN.[/red]"
+            )
+        elif err.status == 403:
+            console.print(
+                "[red]The integration lacks permission (403). Make sure it has "
+                "'Read content' capability and is connected to your pages.[/red]"
+            )
+        else:
+            console.print(f"[red]Notion API error ({err.status}): {err.message}[/red]")
+        sys.exit(1)
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Interrupted. Partial output may remain on disk.[/yellow]")
+        sys.exit(130)
+
+
+def cmd_init(vault: Optional[str] = None) -> None:
+    """Interactively store the token in a private per-user config file."""
+    console.rule("[bold cyan]Notion Better Export — Setup[/bold cyan]")
+    console.print(
+        "1. Create an integration at https://www.notion.so/profile/integrations\n"
+        "   (Internal, [bold]Read content[/bold] only — the exporter never writes to Notion).\n"
+        "2. In Notion, open each top-level page → ••• → Connections → add your integration.\n"
+        "3. Paste the Internal Integration Secret below (input is hidden).\n"
+    )
+    token = getpass.getpass("Notion token: ").strip()
+    if not token:
+        console.print("[red]No token entered; nothing saved.[/red]")
+        sys.exit(1)
+    check_token_or_exit(token)
+
+    try:
+        bot = NotionApiClient(token).whoami()
+    except APIResponseError as err:
+        console.print(f"[red]Notion rejected that token ({err.status}). Nothing saved.[/red]")
+        sys.exit(1)
+    name = bot.get("name") or "integration"
+    console.print(f"[green]✓ Token works — connected as '{name}'.[/green]")
+
+    if vault is None:
+        vault = input("Obsidian vault path (optional, press Enter to skip): ").strip()
+
+    cfg = user_config_path()
+    cfg.parent.mkdir(parents=True, exist_ok=True)
+    lines = [f"NOTION_TOKEN={token}"]
+    if vault:
+        lines.append(f"VAULT_PATH={Path(vault).expanduser()}")
+    # Create with owner-only permissions from the start (no world-readable window).
+    fd = os.open(cfg, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, stat.S_IRUSR | stat.S_IWUSR)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(lines) + "\n")
+    console.print(f"[green]Saved to {cfg} (owner-only permissions).[/green]")
+    console.print("Next: [bold]nbe auto --dry-run[/bold] to preview, then [bold]nbe auto[/bold].")
+
+
+def load_saved_vault_path() -> None:
+    """Let `nbe init` supply VAULT_PATH without overriding the real environment."""
+    if os.environ.get("VAULT_PATH"):
+        return
+    try:
+        lines = user_config_path().read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return
+    for line in lines:
+        if line.startswith("VAULT_PATH="):
+            os.environ["VAULT_PATH"] = line.split("=", 1)[1].strip()
+            return
+
+
 def main() -> None:
-    known_subcommands = {"auto", "export", "fix"}
+    known_subcommands = {"auto", "export", "fix", "init"}
     if len(sys.argv) == 1:
         sys.argv.append("auto")
     elif len(sys.argv) > 1 and sys.argv[1] == "test":
@@ -124,6 +222,13 @@ def main() -> None:
         help="Override output directory (defaults to Obsidian Vault/Notion Better Export)",
     )
     auto_parser.add_argument(
+        "--rate-limit",
+        type=float,
+        default=DEFAULT_REQUESTS_PER_SECOND,
+        metavar="RPS",
+        help="Max Notion API requests per second (default: %s, ceiling: %s)" % (DEFAULT_REQUESTS_PER_SECOND, NOTION_MAX_REQUESTS_PER_SECOND),
+    )
+    auto_parser.add_argument(
         "--date-prefix-rows",
         action="store_true",
         help="Prefix database row notes with date (YYYY-MM-DD)",
@@ -147,7 +252,14 @@ def main() -> None:
         "--token",
         "-t",
         default="",
-        help="Notion integration token (starts with ntn_ or secret_). Defaults to $NOTION_TOKEN or .env",
+        help="Notion token. Prefer $NOTION_TOKEN, .env or `nbe init`: a token on the command line lands in shell history and `ps`.",
+    )
+    export_parser.add_argument(
+        "--rate-limit",
+        type=float,
+        default=DEFAULT_REQUESTS_PER_SECOND,
+        metavar="RPS",
+        help="Max Notion API requests per second (default: %s, ceiling: %s)" % (DEFAULT_REQUESTS_PER_SECOND, NOTION_MAX_REQUESTS_PER_SECOND),
     )
     export_parser.add_argument(
         "--csv-link-format",
@@ -203,6 +315,17 @@ def main() -> None:
         help="Walk and preview the export without writing files",
     )
 
+    # ------------------ Command: init ------------------
+    init_parser = subparsers.add_parser(
+        "init",
+        help="One-time setup: validate your Notion token and store it privately",
+    )
+    init_parser.add_argument(
+        "--vault",
+        default=None,
+        help="Obsidian vault path to remember (skips the prompt)",
+    )
+
     # ------------------ Command: fix (post-processor) ------------------
     fix_parser = subparsers.add_parser(
         "fix",
@@ -230,13 +353,19 @@ def main() -> None:
     args = parser.parse_args()
     setup_logging(args.verbose)
 
+    if args.command == "init":
+        cmd_init(args.vault)
+        return
+
     if args.command == "auto":
         token = find_default_token()
         if not token:
             console.print(
-                "[red]Error: No Notion token found in environment or .env.[/red]"
+                "[red]No Notion token found. Run [bold]nbe init[/bold] or set NOTION_TOKEN.[/red]"
             )
             sys.exit(1)
+        check_token_or_exit(token)
+        load_saved_vault_path()
 
         out_path = resolve_auto_out_dir(args.out)
         max_rows = 5 if args.test else None
@@ -249,7 +378,7 @@ def main() -> None:
         console.rule("[bold cyan]🚀 Notion Better Export — Auto Mode[/bold cyan]")
         console.print(f"[bold]Vault Destination:[/bold] [green]{out_path}[/green]")
         console.print(f"[bold]Execution Mode:[/bold]    [yellow]{mode_desc}[/yellow]")
-        console.print("[bold]Pacing Rate:[/bold]       2.8 requests/sec (proactive rate limit)")
+        console.print(f"[bold]Pacing Rate:[/bold]       {min(args.rate_limit, NOTION_MAX_REQUESTS_PER_SECOND):g} requests/sec (proactive rate limit)")
         console.print("[bold]CSV Linking:[/bold]       Obsidian [[wikilinks]] + Note Links")
         console.print("[bold]Obsidian Bases:[/bold]    Enabled (.base files)")
         console.print("[bold]Linked Views:[/bold]      Auto-deduplicated to canonical databases")
@@ -268,8 +397,9 @@ def main() -> None:
             write_csv=True,
             write_base=True,
             date_prefix_rows=args.date_prefix_rows,
+            requests_per_second=args.rate_limit,
         )
-        summary = exporter.run()
+        summary = run_export(exporter)
         console.print(
             f"\n[bold green]✓ Done! Processed {summary['exported_objects']} objects with {len(summary['errors'])} errors.[/bold green]"
         )
@@ -282,9 +412,10 @@ def main() -> None:
         token = args.token or find_default_token()
         if not token:
             console.print(
-                "[red]Error: No Notion token found. Pass --token, set $NOTION_TOKEN, or add to .env.[/red]"
+                "[red]No Notion token found. Run [bold]nbe init[/bold], set NOTION_TOKEN, or add it to .env.[/red]"
             )
             sys.exit(1)
+        check_token_or_exit(token)
 
         out_path = Path(args.out).expanduser().resolve()
         console.print(f"[bold cyan]Notion Better Export[/bold cyan] → [green]{out_path}[/green]")
@@ -302,8 +433,9 @@ def main() -> None:
             write_csv=not args.no_csv,
             write_base=not args.no_base,
             date_prefix_rows=args.date_prefix_rows,
+            requests_per_second=args.rate_limit,
         )
-        summary = exporter.run()
+        summary = run_export(exporter)
         console.print(
             f"[bold green]✓ Done! Processed {summary['exported_objects']} objects with {len(summary['errors'])} errors.[/bold green]"
         )

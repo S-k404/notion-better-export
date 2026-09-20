@@ -13,12 +13,17 @@ venv/
 ENV/
 env/
 
-# Environment variables & secrets
+# Environment variables & secrets (only the sample is tracked)
 .env
-.env.local
+.env.*
+!.env.sample
+*.pem
+*.key
 
 # Output and local scratch files
 output/
+vault/
+notion_export_manifest.json
 scratch/
 notion_export_legacy.py
 
