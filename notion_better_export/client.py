@@ -5,6 +5,8 @@ from typing import Any, Callable, Dict, List, Optional
 from notion_client import Client
 from notion_client.errors import APIResponseError
 
+from notion_better_export.safety import ExportAborted
+
 logger = logging.getLogger("notion_better_export")
 # Suppress notion_client's internal noisy WARNING logs since we handle retries and pacing cleanly
 logging.getLogger("notion_client").setLevel(logging.ERROR)
@@ -12,6 +14,7 @@ logging.getLogger("notion_client").setLevel(logging.ERROR)
 
 NOTION_MAX_REQUESTS_PER_SECOND = 3.0
 DEFAULT_REQUESTS_PER_SECOND = 2.8
+MAX_CONSECUTIVE_FAILURES = 25
 
 
 class NotionRateLimiter:
@@ -46,13 +49,49 @@ class NotionApiClient:
         max_retries: int = 5,
         base_delay: float = 1.0,
         requests_per_second: float = DEFAULT_REQUESTS_PER_SECOND,
+        max_consecutive_failures: int = MAX_CONSECUTIVE_FAILURES,
     ):
         self.client = Client(auth=token)
+        self.max_consecutive_failures = max_consecutive_failures
+        self.consecutive_failures = 0
         self.max_retries = max_retries
         self.base_delay = base_delay
         self.rate_limiter = NotionRateLimiter(requests_per_second=requests_per_second)
 
     def retry(self, func: Callable, *args, **kwargs) -> Any:
+        """Call the API with pacing and retries, and stop the run if it is hopeless.
+
+        A 401 (revoked/invalid token) aborts immediately. Many consecutive real
+        failures (network down, Notion outage) also abort instead of logging
+        thousands of identical errors. Missing/unshared pages (404/403) are an
+        expected part of a workspace crawl and are not counted.
+        """
+        try:
+            result = self._attempt(func, *args, **kwargs)
+        except ExportAborted:
+            raise
+        except APIResponseError as err:
+            if err.status == 401:
+                raise ExportAborted("Notion rejected the token (401 unauthorized).", 401) from err
+            self._count_failure(err, expected=err.status in (403, 404))
+            raise
+        except Exception as err:
+            self._count_failure(err, expected=False)
+            raise
+        self.consecutive_failures = 0
+        return result
+
+    def _count_failure(self, err: Exception, expected: bool) -> None:
+        if expected:
+            return
+        self.consecutive_failures += 1
+        if self.consecutive_failures >= self.max_consecutive_failures:
+            raise ExportAborted(
+                f"{self.consecutive_failures} consecutive Notion API failures "
+                f"(last: {err}). Check your connection and Notion's status, then re-run."
+            ) from err
+
+    def _attempt(self, func: Callable, *args, **kwargs) -> Any:
         """Executes API function with proactive pacing and exponential backoff on 429."""
         delay = self.base_delay
         for attempt in range(self.max_retries):

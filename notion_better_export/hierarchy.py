@@ -5,6 +5,11 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from notion_better_export.models import NotionObject
 
+# Names Windows cannot create; a vault synced to Windows would fail on them.
+_WINDOWS_RESERVED = {"CON", "PRN", "AUX", "NUL"} | {f"COM{i}" for i in range(1, 10)} | {
+    f"LPT{i}" for i in range(1, 10)
+}
+
 
 def sanitize_filename(name: str, maxlen: int = 120) -> str:
     """Make a Notion title safe as a filename/foldername on macOS/Windows/Linux."""
@@ -17,6 +22,8 @@ def sanitize_filename(name: str, maxlen: int = 120) -> str:
     name = name.strip().strip(".")
     if not name:
         name = "Untitled"
+    if name.split(".")[0].strip().upper() in _WINDOWS_RESERVED:
+        name = f"_{name}"
     return name[:maxlen].strip()
 
 

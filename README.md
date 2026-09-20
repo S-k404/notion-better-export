@@ -104,6 +104,25 @@ Notion allows an **average of 3 requests per second** per integration and answer
 
 ---
 
+## 🛡️ Built-in safety nets
+
+| Situation | What `nbe` does |
+| :--- | :--- |
+| Ctrl-C, crash or power loss mid-export | Every file is written to a temp file and swapped in only when complete, so you never get half-written notes. Re-running is safe. |
+| You point `--out` at your home folder, `/`, or a system folder | Refused outright. |
+| You point `--out` at a folder with your own notes in it | Asks first (or refuses when not interactive) unless you pass `--force`. Folders `nbe` created before don't ask. |
+| Low disk space (< 200 MB) | Warns before starting. |
+| Two exports at once into the same folder | The second one refuses (`.nbe.lock`). A crashed run's stale lock is cleared automatically. |
+| Token revoked or wrong mid-run | Stops at once with a clear message instead of logging thousands of errors. |
+| Notion or your network is down | Stops after 25 consecutive failures. Pages that simply aren't shared with the integration (404/403) never count. |
+| Some pages fail | The rest still export. Failures are listed at the end and saved to `notion_export_errors.log`, and `nbe` exits with code **2** so scripts can notice. |
+| `nbe fix` rewriting an existing export | `--dry-run` previews; originals of changed files are kept in `.nbe-fix-backup/` (`--no-backup` to skip). |
+| Page titled `CON`, `NUL`, `COM1`… | Renamed with a leading `_` so the vault still syncs to Windows. |
+
+Exit codes: `0` success, `1` refused or fatal error, `2` finished but some items failed.
+
+---
+
 ## 🔐 Your files & privacy
 
 - Exports are written **only** to the folder you choose (`--out`, `EXPORT_OUT_DIR`, or `VAULT_PATH`; default `./output`).
@@ -185,6 +204,7 @@ nbe export --out ./output --max-rows 10
 | `--date-prefix-rows` | Prefix entry filenames with `YYYY-MM-DD` | `False` |
 | `--max-rows` | Cap rows queried per database | `None` (all) |
 | `--dry-run, -d` | Crawl workspace without writing to disk | `False` |
+| `--force` | Skip the confirmation for non-empty folders / low disk space | `False` |
 
 ---
 
@@ -193,7 +213,8 @@ If you already have a Notion export directory with raw UUIDs in CSV files or fro
 
 ```bash
 # Automatically resolve UUIDs in CSVs, Markdown frontmatter, and Bases
-nbe fix --dir "/path/to/Obsidian Vault/Notion Export"
+nbe fix --dir "/path/to/Obsidian Vault/Notion Export" --dry-run   # preview first
+nbe fix --dir "/path/to/Obsidian Vault/Notion Export"             # originals go to .nbe-fix-backup/
 ```
 
 ---
@@ -223,6 +244,8 @@ The image runs as a non-root user and the token is passed at run time; it is nev
 | `401 unauthorized` | Token is wrong or was rotated. Run `nbe init` again. |
 | Export is empty / pages missing | The integration only sees connected pages: page → `•••` → **Connections**. |
 | `403` | The integration lacks **Read content**; edit its capabilities. |
+| `Another export … is already writing` | A run is active in that folder. If none is, delete `.nbe.lock` inside it. |
+| `Export stopped: N consecutive Notion API failures` | Network or Notion outage; wait and re-run. Nothing is corrupted. |
 | Very slow | That's the 3 req/s limit; try `nbe auto --test` first, run large exports overnight. |
 | Tables don't render in Obsidian | `.base` files need Obsidian **1.9+** with the Bases core plugin enabled. |
 

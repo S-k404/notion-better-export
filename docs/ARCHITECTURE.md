@@ -60,7 +60,17 @@ Notion API
 | `csv_exporter.py` | Writes CSVs with resolved relations and `Note Link`. |
 | `markdown_exporter.py` | Block → Markdown, `<details>` safety, base embeds, forward-link rewrite, hardened asset download. |
 | `post_processor.py` | Offline UUID resolution for existing exports. |
+| `safety.py` | Failsafes: atomic writes, output-folder checks, single-run lock, `ExportAborted`. |
 | `exporter.py` | Orchestrates the walk, view extraction and file writing; writes the manifest. |
+
+## Failsafes
+
+- **Atomic writes** — every file goes through `safety.atomic_open` / `atomic_write_*` (temp file in the same folder, then `os.replace`). An interruption leaves the previous file intact.
+- **Output checks** — `assert_safe_output_dir` hard-refuses `/`, the home folder, system trees (checked both as typed and after symlink resolution) and the tool's own source folder. `output_dir_warnings` (non-empty folder nbe didn't create, low disk) are soft and overridable with `--force`.
+- **Run lock** — `.nbe.lock` (pid) prevents concurrent runs; stale locks from dead pids are cleared. On Windows it uses lock age, because `os.kill(pid, 0)` would terminate the process there.
+- **Circuit breaker** — `client.retry` raises `ExportAborted` on a 401 or after 25 consecutive real failures (404/403 are expected and ignored). `ExportAborted` is a `BaseException` on purpose: the per-page `except Exception` handlers must not swallow it.
+- **Reporting** — per-page errors are collected, saved to `notion_export_errors.log`, and the CLI exits 2.
+- **`fix`** — `--dry-run`, first-original backups in `.nbe-fix-backup/`, atomic writes.
 
 ## Security properties
 

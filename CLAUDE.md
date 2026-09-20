@@ -22,6 +22,14 @@ nbe init                                      # store the Notion token privately
 5. **Tests.** Run the suite after every change and add a test for each fix or feature.
 6. **Git.** Do NOT run `git push` unless explicitly asked.
 
+## Failsafe rules (do not regress)
+
+- Never write output with `Path.write_text` / `open(..., "w")`; use `safety.atomic_write_text`, `atomic_write_bytes` or `atomic_open`.
+- `ExportAborted` must stay a `BaseException` so per-page `except Exception` blocks cannot swallow it.
+- Never call `os.kill(pid, 0)` on Windows (it terminates the process); see `safety._pid_alive`.
+- `--dry-run` must never create files or folders.
+- Anything that edits existing user files (`fix`) needs dry-run, a first-original backup, and atomic writes.
+
 ## Security rules (do not regress)
 
 - Never put a real token in any tracked file, test, fixture, log line or example. Use obvious placeholders like `ntn_your_notion_integration_token_here`.

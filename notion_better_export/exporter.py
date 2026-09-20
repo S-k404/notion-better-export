@@ -15,6 +15,12 @@ from notion_better_export.hierarchy import (
 )
 from notion_better_export.markdown_exporter import MarkdownExporter
 from notion_better_export.models import DatabaseRow, NotionObject
+from notion_better_export.safety import (
+    MARKER_NAME,
+    assert_safe_output_dir,
+    atomic_write_text,
+    run_lock,
+)
 
 logger = logging.getLogger("notion_better_export")
 
@@ -121,9 +127,19 @@ class NotionBetterExporter:
         return properties_schema, prop_slugs
 
     def run(self) -> Dict[str, Any]:
+        """Execute the export with output-folder checks and a single-run lock."""
+        assert_safe_output_dir(self.out_dir)
+        if self.dry_run:
+            return self._run()
+        with run_lock(self.out_dir):
+            return self._run()
+
+    def _run(self) -> Dict[str, Any]:
         """Execute the full export pipeline."""
         logger.info("Starting Notion export to: %s", self.out_dir)
-        self.out_dir.mkdir(parents=True, exist_ok=True)
+        if not self.dry_run:
+            self.out_dir.mkdir(parents=True, exist_ok=True)
+            atomic_write_text(self.out_dir / MARKER_NAME, "created by notion-better-export\n")
 
         # -------------------------------------------------------------
         # Step 1: Discover all objects accessible to the integration
@@ -254,10 +270,7 @@ class NotionBetterExporter:
             self.md_exporter.rewrite_forward_links(self.out_dir)
 
             manifest_path = self.out_dir / "notion_export_manifest.json"
-            manifest_path.write_text(
-                json.dumps(self.resolver.id_to_relpath, indent=2),
-                encoding="utf-8",
-            )
+            atomic_write_text(manifest_path, json.dumps(self.resolver.id_to_relpath, indent=2))
             logger.info("Saved export manifest to: %s", manifest_path)
 
         summary = {
@@ -321,7 +334,7 @@ class NotionBetterExporter:
             )
 
             md_file.parent.mkdir(parents=True, exist_ok=True)
-            md_file.write_text(full_content, encoding="utf-8")
+            atomic_write_text(md_file, full_content)
 
         # Recurse into subpages and child databases
         self._walk_children_blocks(
@@ -444,7 +457,7 @@ class NotionBetterExporter:
                     extra_frontmatter=row_fm,
                 )
                 row_file.parent.mkdir(parents=True, exist_ok=True)
-                row_file.write_text(full_row_md, encoding="utf-8")
+                atomic_write_text(row_file, full_row_md)
 
                 # Recurse into subpages nested inside this row
                 self._walk_children_blocks(

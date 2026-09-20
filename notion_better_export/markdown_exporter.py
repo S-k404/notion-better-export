@@ -17,6 +17,7 @@ from notion_better_export.hierarchy import (
     slugify_property_name,
 )
 from notion_better_export.models import DatabaseRow
+from notion_better_export.safety import atomic_write_bytes, atomic_write_text
 
 logger = logging.getLogger("notion_better_export")
 
@@ -168,7 +169,7 @@ class MarkdownExporter:
             if len(data) > MAX_ASSET_BYTES:
                 logger.warning("Skipping oversized asset: %s", safe_url)
                 return None
-            dest_file.write_bytes(data)
+            atomic_write_bytes(dest_file, data)
             return f"_assets/{dest_file.name}"
         except Exception as e:
             logger.warning("Failed to download asset %s: %s", safe_url, e)
@@ -454,4 +455,4 @@ class MarkdownExporter:
             new_text = pattern_embed.sub(embed_replacer, text)
             new_text = pattern_pending.sub(pending_replacer, new_text)
             if new_text != text:
-                md_path.write_text(new_text, encoding="utf-8")
+                atomic_write_text(md_path, new_text)

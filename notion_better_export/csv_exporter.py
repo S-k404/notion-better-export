@@ -5,6 +5,7 @@ from typing import Dict, List, Optional
 
 from notion_better_export.hierarchy import HierarchyResolver
 from notion_better_export.models import DatabaseRow
+from notion_better_export.safety import atomic_open
 
 logger = logging.getLogger("notion_better_export")
 
@@ -81,7 +82,7 @@ class CsvExporter:
             fieldnames.append("Note Link")
         fieldnames.extend(property_names)
 
-        with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        with atomic_open(csv_path, "w", newline="") as f:
             writer = csv.DictWriter(
                 f, fieldnames=fieldnames, extrasaction="ignore"
             )

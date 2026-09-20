@@ -7,6 +7,8 @@ try:
 except ImportError:
     yaml = None
 
+from notion_better_export.safety import atomic_write_text
+
 logger = logging.getLogger("notion_better_export")
 
 
@@ -120,5 +122,5 @@ class BaseExporter:
 
         base_path.parent.mkdir(parents=True, exist_ok=True)
         content = yaml.safe_dump(base_doc, sort_keys=False, allow_unicode=True)
-        base_path.write_text(content, encoding="utf-8")
+        atomic_write_text(base_path, content)
         logger.debug("Wrote Obsidian Base file: %s", base_path)

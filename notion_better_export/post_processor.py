@@ -1,9 +1,13 @@
 import csv
+import io
 import json
 import logging
 import re
+import shutil
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, List, Optional
+
+from notion_better_export.safety import atomic_write_text
 
 logger = logging.getLogger("notion_better_export")
 
@@ -11,6 +15,9 @@ UUID_REGEX = re.compile(
     r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b",
     re.IGNORECASE,
 )
+
+
+BACKUP_DIR_NAME = ".nbe-fix-backup"
 
 
 class ExportPostProcessor:
@@ -23,8 +30,13 @@ class ExportPostProcessor:
         export_dir: Path,
         manifest_path: Optional[Path] = None,
         link_format: str = "wikilink",
+        dry_run: bool = False,
+        backup: bool = True,
     ):
         self.export_dir = Path(export_dir).resolve()
+        self.dry_run = dry_run
+        self.backup = backup and not dry_run
+        self.backup_dir = self.export_dir / BACKUP_DIR_NAME
         self.manifest_path = (
             Path(manifest_path).resolve()
             if manifest_path
@@ -33,6 +45,27 @@ class ExportPostProcessor:
         self.link_format = link_format.lower()
         self.id_to_path: Dict[str, str] = {}
         self.id_to_title: Dict[str, str] = {}
+
+    def _save(self, path: Path, text: str, newline: Optional[str] = None) -> None:
+        """Write a fixed file atomically, keeping the original in the backup folder first.
+
+        The backup keeps the *first* original, so re-running fix never overwrites it.
+        """
+        if self.dry_run:
+            return
+        if self.backup:
+            try:
+                rel = Path(path).resolve().relative_to(self.export_dir)
+            except ValueError:  # file outside the export folder: keep just its name
+                rel = Path(Path(path).name)
+            dest = self.backup_dir / rel
+            if not dest.exists():
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(path, dest)
+        atomic_write_text(path, text, newline=newline)
+
+    def _files(self, pattern: str) -> List[Path]:
+        return [p for p in self.export_dir.rglob(pattern) if self.backup_dir not in p.parents]
 
     def load_or_build_manifest(self) -> Dict[str, str]:
         """Loads manifest if exists, or builds one by scanning .md frontmatter."""
@@ -61,7 +94,7 @@ class ExportPostProcessor:
         title_pattern = re.compile(r'title:\s*["\']?([^"\']+)["\']?', re.IGNORECASE)
 
         count = 0
-        for md_file in self.export_dir.rglob("*.md"):
+        for md_file in self._files("*.md"):
             try:
                 content = md_file.read_text(encoding="utf-8", errors="replace")
             except Exception:
@@ -169,9 +202,10 @@ class ExportPostProcessor:
             new_rows.append(cells)
 
         # Write updated CSV
-        with open(csv_file, "w", newline="", encoding="utf-8") as f:
-            writer = csv.writer(f)
-            writer.writerows(new_rows)
+        if replacements_count > 0 or not has_note_link:
+            buffer = io.StringIO(newline="")
+            csv.writer(buffer).writerows(new_rows)
+            self._save(csv_file, buffer.getvalue(), newline="")
 
         return replacements_count
 
@@ -217,7 +251,7 @@ class ExportPostProcessor:
 
         if count > 0:
             new_fm = "".join(new_lines)
-            md_file.write_text(f"---{new_fm}---{body}", encoding="utf-8")
+            self._save(md_file, f"---{new_fm}---{body}")
 
         return count
 
@@ -241,7 +275,7 @@ class ExportPostProcessor:
                 count += 1
 
         if count > 0:
-            base_file.write_text(new_text, encoding="utf-8")
+            self._save(base_file, new_text)
 
         return count
 
@@ -249,9 +283,12 @@ class ExportPostProcessor:
         """Runs the offline post-processor across all CSV, Markdown, and Base files."""
         self.load_or_build_manifest()
 
-        csv_files = list(self.export_dir.rglob("*.csv"))
-        md_files = list(self.export_dir.rglob("*.md"))
-        base_files = list(self.export_dir.rglob("*.base"))
+        if not self.export_dir.is_dir():
+            raise FileNotFoundError(f"{self.export_dir} is not a folder")
+
+        csv_files = self._files("*.csv")
+        md_files = self._files("*.md")
+        base_files = self._files("*.base")
 
         total_csv_replacements = 0
         total_md_replacements = 0
