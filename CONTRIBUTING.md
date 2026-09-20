@@ -10,7 +10,7 @@ We recommend using [`uv`](https://github.com/astral-sh/uv) or standard Python `v
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/shamitkumar4/notion-better-export.git
+git clone https://github.com/S-k404/notion-better-export.git
 cd notion-better-export
 
 # 2. Create and activate a virtual environment

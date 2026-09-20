@@ -45,9 +45,9 @@ notion-better-export = "notion_better_export.cli:main"
 nbe = "notion_better_export.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/shamitkumar4/notion-better-export"
-Repository = "https://github.com/shamitkumar4/notion-better-export"
-Issues = "https://github.com/shamitkumar4/notion-better-export/issues"
+Homepage = "https://github.com/S-k404/notion-better-export"
+Repository = "https://github.com/S-k404/notion-better-export"
+Issues = "https://github.com/S-k404/notion-better-export/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["notion_better_export"]
