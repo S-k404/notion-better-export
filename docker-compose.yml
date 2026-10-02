@@ -1,0 +1,14 @@
+# Usage:
+#   cp .env.sample .env        # put your NOTION_TOKEN in .env
+#   docker compose run --rm notion-export             # full export into ./vault
+#   docker compose run --rm notion-export auto --dry-run
+services:
+  notion-export:
+    build: .
+    environment:
+      # Passed from your shell / .env at run time; never baked into the image.
+      - NOTION_TOKEN=${NOTION_TOKEN:?Set NOTION_TOKEN in your .env or shell}
+    volumes:
+      # Point VAULT_DIR at your Obsidian vault, or leave the default ./vault
+      - ${VAULT_DIR:-./vault}:/vault
+    command: ["export", "--out", "/vault/Notion Better Export"]
