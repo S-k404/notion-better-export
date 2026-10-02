@@ -1,0 +1,15 @@
+# Never bake secrets, history, or local data into the image
+.env
+.env.*
+!.env.sample
+.git
+.github
+.venv
+venv
+output
+vault
+__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+notion_export_manifest.json

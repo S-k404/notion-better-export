@@ -1,0 +1,49 @@
+# Contributing to Notion Better Export
+
+Thank you for your interest in improving **Notion Better Export**! We welcome bug reports, feature requests, documentation improvements, and pull requests.
+
+---
+
+## Development Setup
+
+We recommend using [`uv`](https://github.com/astral-sh/uv) or standard Python `venv`.
+
+```bash
+# 1. Clone the repository
+git clone https://github.com/S-k404/notion-better-export.git
+cd notion-better-export
+
+# 2. Create and activate a virtual environment
+uv venv
+source .venv/bin/activate
+
+# 3. Install in editable mode with development dependencies
+uv pip install -e ".[dev]"
+```
+
+---
+
+## Running Tests
+
+All changes must pass the test suite:
+
+```bash
+uv run python -m unittest discover tests -v
+```
+
+If adding new functionality or fixing edge cases, please add corresponding unit tests in `tests/`.
+
+---
+
+## Architecture Overview
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Please read [SECURITY.md](SECURITY.md) before touching token handling or downloads, and never commit a real token, even in tests.
+
+---
+
+## Pull Request Guidelines
+
+1. Ensure all tests pass (`uv run python -m unittest discover tests`).
+2. Follow PEP 8 and keep code clean and readable.
+3. Keep pull requests focused on a single feature or bug fix.
+4. Update the `README.md` documentation if introducing new CLI flags or features.
