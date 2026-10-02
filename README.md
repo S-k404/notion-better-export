@@ -252,21 +252,7 @@ nbe export --out ./output --skip-database "Archived Logs" --skip-database "Old I
 nbe export --out ./output --max-rows 10
 ```
 
-#### CLI Flags for `export`:
-| Flag | Description | Default |
-| :--- | :--- | :--- |
-| `--out, -o` | Target export directory path | *Required* |
-| `--token, -t` | Notion API token (prefer `nbe init`/`.env`; CLI args leak into shell history) | `$NOTION_TOKEN`, `.env`, or `nbe init` |
-| `--rate-limit` | Max requests/second (capped at 3.0) | `2.8` |
-| `--csv-link-format` | Relation cell format (`wikilink`, `title`, `markdown`) | `wikilink` |
-| `--no-note-link` | Omit `Note Link` column in CSV files | `False` |
-| `--no-csv` | Skip generating CSV files | `False` |
-| `--no-base` | Skip generating Obsidian `.base` files | `False` |
-| `--download-assets` | Download file/image attachments to local `_assets/` | `False` |
-| `--date-prefix-rows` | Prefix entry filenames with `YYYY-MM-DD` | `False` |
-| `--max-rows` | Cap rows queried per database | `None` (all) |
-| `--dry-run, -d` | Crawl workspace without writing to disk | `False` |
-| `--force` | Skip the confirmation for non-empty folders / low disk space | `False` |
+Full flag list (including `--skip-database`, `--vault-subpath`, and every default) is in [docs/CLI_REFERENCE.md](docs/CLI_REFERENCE.md#nbe-export).
 
 ---
 
@@ -314,6 +300,8 @@ The image runs as a non-root user and the token is passed at run time; it is nev
 | Very slow | That's the 3 req/s limit; try `nbe auto --test` first, run large exports overnight. |
 | Tables don't render in Obsidian | `.base` files need Obsidian **1.9+** with the Bases core plugin enabled. |
 
+More (Docker, `fix`, and development issues) in [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
+
 ---
 
 ## 🧪 Running Tests
@@ -332,9 +320,15 @@ The interactive menu is tested by scripting whole sessions with canned answers (
 
 ---
 
-## 🏛️ Project Architecture
+## 📚 Documentation
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the pipeline, module map and design notes, and [CONTRIBUTING.md](CONTRIBUTING.md) to get involved.
+| Doc | Covers |
+| :--- | :--- |
+| [docs/CLI_REFERENCE.md](docs/CLI_REFERENCE.md) | Every flag for `auto`, `export`, `init`, and `fix`, with defaults |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Pipeline, module map, failsafes, and security properties |
+| [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Install, auth, Docker, `fix`, and development issues beyond the table above |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | How to get involved |
+| [SECURITY.md](SECURITY.md) | Reporting a vulnerability |
 
 ---
 
