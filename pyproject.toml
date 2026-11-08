@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [
-    { name = "S-k404", email = "you@example.com" },
+    { name = "S-k404", email = "103100340+S-k404@users.noreply.github.com" },
 ]
 keywords = ["notion", "obsidian", "bases", "export", "markdown", "csv", "pkm"]
 classifiers = [
